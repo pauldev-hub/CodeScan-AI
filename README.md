@@ -5,8 +5,8 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.10+-3776ab?logo=python&logoColor=white&style=for-the-badge)](https://www.python.org/)
 [![React](https://img.shields.io/badge/react-18+-61dafb?logo=react&logoColor=white&style=for-the-badge)](https://react.dev/)
-[![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
-[![Status](https://img.shields.io/badge/status-In-Development%20Dev-yellow?style=for-the-badge)](https://github.com)
+[![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://opensource.org/licenses/MIT)
+[![Status](https://img.shields.io/badge/status-In%20Development-yellow?style=for-the-badge)](https://github.com)
 
 [![Flask](https://img.shields.io/badge/flask-3.0+-000000?logo=flask&style=for-the-badge)](https://flask.palletsprojects.com/)
 [![Vite](https://img.shields.io/badge/vite-5.0+-9400d3?logo=vite&logoColor=white&style=for-the-badge)](https://vitejs.dev/)
@@ -110,7 +110,10 @@ With real-time AI-powered code scanning, comprehensive vulnerability analysis, a
 - Team collaboration tools
 - Scan history tracking
 
-</td><td>
+</td>
+</tr>
+<tr>
+<td colspan="2">
 
 ### 🎓 **Beginner Mode** ⭐ (Differentiator)
 - Non-jargon explanations for complex vulnerabilities
@@ -118,7 +121,8 @@ With real-time AI-powered code scanning, comprehensive vulnerability analysis, a
 - Best practice recommendations
 - Interactive learning resources
 
-</td></tr>
+</td>
+</tr>
 </table>
 
 ---
@@ -355,7 +359,7 @@ Results include:
 - **Language Support**: Currently supports Python, JavaScript, Java, Go, Rust (expanding in v1.1)
 - **Async Processing**: Large repositories (>10K files) require Celery worker for non-blocking analysis
 
-### Planned for v1.1 (Q2 2026)
+### Future Roadmap (v1.2+)
 - 🔄 **Batch Scanning**: Upload multiple files simultaneously
 - 📦 **Docker Support**: Docker Compose setup for one-click local deployment
 - 🔗 **CI/CD Integration**: GitHub Actions, GitLab CI, Jenkins plugins
@@ -363,14 +367,6 @@ Results include:
 - 📈 **Advanced Analytics**: Trend analysis, team metrics, vulnerability timeline
 - 🔐 **Enterprise Auth**: SAML2, OAuth2, LDAP support
 - 💾 **PostgreSQL Support**: Better scalability for production
-
-### Future Roadmap (v1.2+)
-- Machine learning-based false positive reduction
-- Custom rule engine for organization policies
-- IDE plugins (VS Code, JetBrains)
-- Mobile app for report viewing
-- On-premise deployment guide
-
 ---
 
 ## �📁 Project Structure
@@ -615,22 +611,20 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ---
 
----
+<div align="center">
 
 ## 🚀 **An Independent Project Designed & Built by Pratyush Paul**
-
-<div align="center">
 
 ### ✨ **A Vision for Smarter Code Review in the Modern Era**
 
 **CodeScan AI** is built by **Pratyush** — a developer who believes everyone deserves to understand the risks in their code, whether you've been coding for years or just shipped your first AI-assisted app.
 
-This project was crafted from scratch with meticulous attention to:
-- 🧠 **Deep-thought architecture** combining industry best practices
-- 💡 **Innovation-focused** AI integration and user experience
-- 🔧 **Production-ready** code with comprehensive testing
-- 🎯 **Accessibility** making complex security findings understandable to all
+#### This project was crafted from scratch with meticulous attention to:
 
+- 🧠 **Deep-thought architecture** — combining industry best practices
+- 💡 **Innovation-focused** — AI integration and user experience  
+- 🔧 **Production-ready** — code with comprehensive testing
+- 🎯 **Accessibility** — making complex security findings understandable to all
 
 ---
 
@@ -640,6 +634,6 @@ This project was crafted from scratch with meticulous attention to:
 
 [GitHub](https://github.com/yourusername/codescan-ai) • [Try Online](#) • [Docs](docs/)
 
-**Status**: 🟢 Active Development | **Latest**: v1.0.0
+**Status**: � In Development | **Latest**: v0.9 Alpha | **Not Production Ready**
 
 </div>
