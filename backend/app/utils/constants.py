@@ -1,0 +1,38 @@
+ALLOWED_UPLOAD_EXTENSIONS = {
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".py",
+    ".java",
+    ".go",
+    ".rs",
+    ".cpp",
+    ".rb",
+    ".php",
+    ".cs",
+}
+
+MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024
+MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_PASTE_CODE_CHARS = 5000
+
+GITHUB_MAX_FILE_BYTES = 200 * 1024
+GITHUB_MAX_TOTAL_BYTES = 2 * 1024 * 1024
+GITHUB_MAX_FILES = 80
+ANALYSIS_CHUNK_CHAR_SIZE = 6000
+ANALYSIS_MAX_CHUNKS = 20
+
+SCAN_STATUS_PENDING = "pending"
+SCAN_STATUS_RUNNING = "running"
+SCAN_STATUS_COMPLETE = "complete"
+SCAN_STATUS_ERROR = "error"
+
+VALID_SCAN_INPUT_TYPES = {"url", "upload", "paste"}
+VALID_SEVERITIES = {"critical", "high", "medium", "low"}
+VALID_CATEGORIES = {"security", "bug", "performance", "logic"}
+
+RATE_LIMIT_AUTH_MAX_REQUESTS = 20
+RATE_LIMIT_AUTH_WINDOW_SECONDS = 60
+RATE_LIMIT_SCAN_MAX_REQUESTS = 10
+RATE_LIMIT_SCAN_WINDOW_SECONDS = 3600
