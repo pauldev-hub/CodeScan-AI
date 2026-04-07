@@ -6,7 +6,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-3776ab?logo=python&logoColor=white&style=for-the-badge)](https://www.python.org/)
 [![React](https://img.shields.io/badge/react-18+-61dafb?logo=react&logoColor=white&style=for-the-badge)](https://react.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
-[![Status](https://img.shields.io/badge/status-Active-success?style=for-the-badge)](https://github.com)
+[![Status](https://img.shields.io/badge/status-In-Development%20Dev-yellow?style=for-the-badge)](https://github.com)
 
 [![Flask](https://img.shields.io/badge/flask-3.0+-000000?logo=flask&style=for-the-badge)](https://flask.palletsprojects.com/)
 [![Vite](https://img.shields.io/badge/vite-5.0+-9400d3?logo=vite&logoColor=white&style=for-the-badge)](https://vitejs.dev/)
@@ -25,21 +25,27 @@ With real-time AI-powered code scanning, comprehensive vulnerability analysis, a
 
 ---
 
-## 🚀 **Independently Designed & Built by Pratyush**
+## 📚 Table of Contents
 
-<div align="center">
-
-### ✨ **A Vision for Smarter Code Review in the Modern Era**
-
-**CodeScan AI** is the brainchild of **Pratyush**, a passionate developer with a mission to democratize code quality assurance. This project was built from scratch with meticulous attention to architecture, user experience, and the evolving needs of modern development teams.
-
-#### 🎨 **Crafted with Purpose**
-- 🧠 **Deep-thought architecture** combining best practices from industry leaders
-- 💡 **Innovation-focused** with cutting-edge AI integration
-- 🔧 **Production-ready** from day one with comprehensive testing
-- 🎯 **User-centric design** making complex security findings accessible to everyone
-
-</div>
+- [🚀 Quick Start](#-quick-start)
+- [✨ Key Features](#-key-features)
+- [🌊 Why CodeScan AI in the Era of Vibecoding?](#-why-codescan-ai-in-the-era-of-vibecoding)
+- [🏗️ Architecture Overview](#️-architecture-overview)
+- [📖 Usage Examples](#-usage-examples)
+- [🔐 Security & Privacy](#-security--privacy)
+- [📋 Known Limitations & Roadmap](#-known-limitations--roadmap)
+- [📁 Project Structure](#-project-structure)
+- [🔌 API Endpoints](#-api-endpoints)
+- [🧪 Testing](#-testing)
+- [🚀 Deployment](#-deployment)
+- [🤖 AI Provider System](#-ai-provider-system)
+- [📊 Database Schema](#-database-schema)
+- [🔧 Development Workflow](#-development-workflow)
+- [🤝 Contributing](#-contributing)
+- [📝 License](#-license)
+- [📬 Support & Feedback](#-support--feedback)
+- [🙏 Acknowledgments](#-acknowledgments)
+- [🌟 Built by Pratyush](#-independently-designed--built-by-pratyush)
 
 ---
 
@@ -104,8 +110,15 @@ With real-time AI-powered code scanning, comprehensive vulnerability analysis, a
 - Team collaboration tools
 - Scan history tracking
 
-</td>
-</tr>
+</td><td>
+
+### 🎓 **Beginner Mode** ⭐ (Differentiator)
+- Non-jargon explanations for complex vulnerabilities
+- Step-by-step guidance on fixing issues
+- Best practice recommendations
+- Interactive learning resources
+
+</td></tr>
 </table>
 
 ---
@@ -228,8 +241,6 @@ cd backend
 # Create virtual environment
 python -m venv .venv
 
-# Activate virtual environment
-# On Windows:
 .venv\Scripts\activate
 # On macOS/Linux:
 source .venv/bin/activate
@@ -239,11 +250,6 @@ pip install -r requirements.txt
 
 # Set up environment variables
 cp .env.example .env
-# Edit .env and add your API keys:
-# - GROQ_API_KEY
-# - GOOGLE_GEMINI_API_KEY
-# - GITHUB_TOKEN (optional, for private repos)
-# - SECRET_KEY (generate with: python -c "import secrets; print(secrets.token_hex(32))")
 
 # Initialize database
 flask db upgrade
@@ -340,7 +346,34 @@ Results include:
 
 ---
 
-## 📁 Project Structure
+## � Known Limitations & Roadmap
+
+### Current Limitations (v1.0)
+- **Rate Limiting**: 10 scans/hour per user (free tier) to prevent abuse
+- **Database Scale**: SQLite is suitable for small to medium deployments; enterprise deployments should migrate to PostgreSQL
+- **File Size Limit**: Maximum 5MB per file upload
+- **Language Support**: Currently supports Python, JavaScript, Java, Go, Rust (expanding in v1.1)
+- **Async Processing**: Large repositories (>10K files) require Celery worker for non-blocking analysis
+
+### Planned for v1.1 (Q2 2026)
+- 🔄 **Batch Scanning**: Upload multiple files simultaneously
+- 📦 **Docker Support**: Docker Compose setup for one-click local deployment
+- 🔗 **CI/CD Integration**: GitHub Actions, GitLab CI, Jenkins plugins
+- 🌍 **Multi-Language Support**: Add C/C++, TypeScript, PHP, Ruby
+- 📈 **Advanced Analytics**: Trend analysis, team metrics, vulnerability timeline
+- 🔐 **Enterprise Auth**: SAML2, OAuth2, LDAP support
+- 💾 **PostgreSQL Support**: Better scalability for production
+
+### Future Roadmap (v1.2+)
+- Machine learning-based false positive reduction
+- Custom rule engine for organization policies
+- IDE plugins (VS Code, JetBrains)
+- Mobile app for report viewing
+- On-premise deployment guide
+
+---
+
+## �📁 Project Structure
 
 ```
 codescan-ai/
@@ -582,11 +615,26 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ---
 
+---
+
+## 🚀 **An Independent Project Designed & Built by Pratyush Paul**
+
 <div align="center">
 
-### 🌟 **Built with ❤️ by Pratyush** 🌟
+### ✨ **A Vision for Smarter Code Review in the Modern Era**
 
-**CodeScan AI** is independently designed, architected, and maintained by **Pratyush**, dedicated to making code review accessible to everyone—technical or not.
+**CodeScan AI** is built by **Pratyush** — a developer who believes everyone deserves to understand the risks in their code, whether you've been coding for years or just shipped your first AI-assisted app.
+
+This project was crafted from scratch with meticulous attention to:
+- 🧠 **Deep-thought architecture** combining industry best practices
+- 💡 **Innovation-focused** AI integration and user experience
+- 🔧 **Production-ready** code with comprehensive testing
+- 🎯 **Accessibility** making complex security findings understandable to all
+
+
+---
+
+### 🌟 **Built with ❤️ by Pratyush** 🌟
 
 ⭐ **If you find this project useful, please star it on GitHub!**
 
