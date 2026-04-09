@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f6f7f9;
+  --bg2: #ffffff;
+  --bg3: #eef0f5;
+  --border: #e3e6ef;
+  --text: #0f1117;
+  --text2: #5a5f7a;
+  --accent: #2563eb;
+  --accent-glow: rgba(37, 99, 235, 0.12);
+  --green: #059669;
+  --red: #dc2626;
+  --yellow: #d97706;
+  --purple: #7c3aed;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --bg2: #161b22;
+  --bg3: #1c2230;
+  --border: #21293a;
+  --text: #e6edf3;
+  --text2: #8b949e;
+  --accent: #58a6ff;
+  --accent-glow: rgba(88, 166, 255, 0.15);
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #e3b341;
+  --purple: #bc8cff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: radial-gradient(circle at top, var(--bg3), var(--bg));
+  color: var(--text);
+  font-family: "Syne", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.theme-transition,
+.theme-transition * {
+  transition: background-color 400ms cubic-bezier(0.4, 0, 0.2, 1), border-color 400ms cubic-bezier(0.4, 0, 0.2, 1), color 400ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.codescan-shell {
+  min-height: 100vh;
+}
+
+.codescan-prism {
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg3);
+  padding: 12px;
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.codescan-prism .token.comment,
+.codescan-prism .token.prolog,
+.codescan-prism .token.doctype,
+.codescan-prism .token.cdata {
+  color: #6b7280;
+}
+
+.codescan-prism .token.keyword,
+.codescan-prism .token.attr-name,
+.codescan-prism .token.selector {
+  color: var(--purple);
+}
+
+.codescan-prism .token.string,
+.codescan-prism .token.char,
+.codescan-prism .token.inserted {
+  color: var(--green);
+}
+
+.codescan-prism .token.function,
+.codescan-prism .token.class-name {
+  color: var(--accent);
+}
+
+.codescan-prism .token.number,
+.codescan-prism .token.boolean,
+.codescan-prism .token.constant,
+.codescan-prism .token.deleted {
+  color: var(--red);
+}
