@@ -22,6 +22,16 @@ socketio = SocketIO()
 celery_app = Celery(__name__)
 
 
+class FlaskTask(Task):
+    flask_app = None
+
+    def __call__(self, *args, **kwargs):
+        if self.flask_app is None:
+            return self.run(*args, **kwargs)
+        with self.flask_app.app_context():
+            return self.run(*args, **kwargs)
+
+
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
     del connection_record
@@ -45,16 +55,16 @@ def register_extensions(app):
 
 
 def celery_init_app(app):
-    class FlaskTask(Task):
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
-
+    FlaskTask.flask_app = app
     celery = Celery(app.name, task_cls=FlaskTask)
     celery.conf.update(
         broker_url=app.config.get("CELERY_BROKER_URL"),
         result_backend=app.config.get("CELERY_RESULT_BACKEND"),
         task_ignore_result=False,
+        task_always_eager=app.config.get("CELERY_TASK_ALWAYS_EAGER", False),
+        task_store_eager_result=app.config.get("CELERY_TASK_STORE_EAGER_RESULT", False),
+        broker_connection_retry_on_startup=True,
+        worker_pool=app.config.get("CELERY_WORKER_POOL"),
     )
     celery.set_default()
     app.extensions["celery"] = celery

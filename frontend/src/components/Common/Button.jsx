@@ -1,9 +1,9 @@
 import clsx from "clsx";
 
 const variants = {
-  primary: "bg-accent text-white border border-accent hover:opacity-90",
-  ghost: "bg-bg3 text-text border border-border hover:bg-bg2",
-  danger: "bg-red text-white border border-red hover:opacity-90",
+  primary: "border border-[color:var(--accent)] bg-[linear-gradient(135deg,var(--accent),var(--accent-2))] text-[#22130a] shadow-[0_16px_30px_rgba(214,161,108,0.24)] hover:-translate-y-0.5 hover:shadow-[0_18px_34px_rgba(214,161,108,0.3)]",
+  ghost: "border border-border bg-bg3/80 text-text hover:border-[color:var(--border-strong)] hover:bg-bg2",
+  danger: "bg-red text-[#2b0f0f] border border-red hover:opacity-90",
 };
 
 const sizes = {
@@ -24,7 +24,7 @@ const Button = ({
   <button
     type={type}
     className={clsx(
-      "inline-flex items-center justify-center gap-2 rounded-lg font-semibold transition-all duration-200 ease-out disabled:cursor-not-allowed disabled:opacity-50",
+      "inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-200 ease-out disabled:cursor-not-allowed disabled:opacity-50",
       variants[variant],
       sizes[size],
       className

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Activity, ArrowRight, Clock3, ShieldAlert } from "lucide-react";
 
 import Button from "../components/Common/Button";
 import Badge from "../components/Common/Badge";
 import Card from "../components/Common/Card";
+import ScrollReveal from "../components/Common/ScrollReveal";
 import ScanComparison from "../components/History/ScanComparison";
 import ScoreTimeline from "../components/History/ScoreTimeline";
 import { getScanHistory } from "../services/scanService";
@@ -55,16 +57,51 @@ const DashboardPage = () => {
   }, [historyState.page]);
 
   const hasHistory = historyState.items.length > 0;
+  const latest = historyState.items[0];
 
   return (
-    <main className="space-y-4">
-      <Card>
-        <h1 className="text-2xl font-bold text-text">Dashboard</h1>
-        <p className="mt-2 text-sm text-text2">Track scan health over time and continue from your latest results.</p>
-        <Link to={APP_ROUTES.scan} className="mt-4 inline-block">
-          <Button>Start New Scan</Button>
-        </Link>
-      </Card>
+    <main className="space-y-5">
+      <ScrollReveal className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+        <Card className="overflow-hidden">
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-accent">Command center</p>
+          <h1 className="mt-4 text-4xl font-bold leading-tight text-text md:text-5xl">Track scan health and reopen work instantly.</h1>
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-text2">
+            Review the latest findings, compare score movement, and jump back into the scan workspace without digging through sparse lists.
+          </p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link to={APP_ROUTES.scan}>
+              <Button>
+                Start New Scan
+                <ArrowRight size={16} />
+              </Button>
+            </Link>
+          </div>
+        </Card>
+
+        <Card className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+          <div className="rounded-[20px] border border-border bg-bg3/70 p-4">
+            <div className="flex items-center gap-2 text-text3">
+              <Activity size={16} />
+              <span className="text-[11px] uppercase tracking-[0.16em]">Latest score</span>
+            </div>
+            <p className="mt-4 text-4xl font-bold text-text">{latest?.health_score ?? "n/a"}</p>
+          </div>
+          <div className="rounded-[20px] border border-border bg-bg3/70 p-4">
+            <div className="flex items-center gap-2 text-text3">
+              <ShieldAlert size={16} />
+              <span className="text-[11px] uppercase tracking-[0.16em]">Latest findings</span>
+            </div>
+            <p className="mt-4 text-4xl font-bold text-text">{latest?.total_findings ?? 0}</p>
+          </div>
+          <div className="rounded-[20px] border border-border bg-bg3/70 p-4 sm:col-span-2 xl:col-span-1">
+            <div className="flex items-center gap-2 text-text3">
+              <Clock3 size={16} />
+              <span className="text-[11px] uppercase tracking-[0.16em]">Recent mode</span>
+            </div>
+            <p className="mt-4 text-xl font-semibold text-text">{latest?.input_type ? `${latest.input_type.toUpperCase()} scan` : "No scans yet"}</p>
+          </div>
+        </Card>
+      </ScrollReveal>
 
       {historyState.loading ? (
         <Card>
@@ -92,20 +129,25 @@ const DashboardPage = () => {
 
       {!historyState.loading && !historyState.error && hasHistory ? (
         <>
+          <ScrollReveal delay={90}>
           <Card>
             <h2 className="text-lg font-bold text-text">Health Score Timeline</h2>
             <div className="mt-4">
               <ScoreTimeline items={historyState.items} />
             </div>
           </Card>
+          </ScrollReveal>
 
+          <ScrollReveal delay={130}>
           <Card>
             <h2 className="text-lg font-bold text-text">Latest Scan Comparison</h2>
             <div className="mt-4">
               <ScanComparison items={historyState.items} />
             </div>
           </Card>
+          </ScrollReveal>
 
+          <ScrollReveal delay={170}>
           <Card>
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-text">Recent Scans</h2>
@@ -117,7 +159,7 @@ const DashboardPage = () => {
                 <Link
                   key={scan.scan_id}
                   to={APP_ROUTES.results.replace(":scanId", scan.scan_id)}
-                  className="block rounded-lg border border-border bg-bg3 p-3 transition-colors hover:bg-bg2"
+                  className="block rounded-[20px] border border-border bg-bg3/80 p-4 transition-colors hover:border-[color:var(--border-strong)] hover:bg-bg2"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -152,6 +194,7 @@ const DashboardPage = () => {
               </Button>
             </div>
           </Card>
+          </ScrollReveal>
         </>
       ) : null}
     </main>

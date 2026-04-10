@@ -1,14 +1,11 @@
 
 import asyncio
+import importlib
 import json
 import logging
 import os
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
-
-import google.generativeai as genai
-from groq import Groq
-from huggingface_hub import InferenceClient
 
 logger = logging.getLogger(__name__)
 
@@ -75,19 +72,31 @@ class AIProviderService:
         """Initialize all available provider clients."""
         groq_key = os.getenv("GROQ_API_KEY")
         if groq_key:
-            self.groq_client = Groq(api_key=groq_key)
-            logger.info("Groq client initialized")
+            try:
+                groq_module = importlib.import_module("groq")
+                self.groq_client = groq_module.Groq(api_key=groq_key)
+                logger.info("Groq client initialized")
+            except Exception as exc:
+                logger.warning("Groq client disabled due to initialization error: %s", exc)
 
         gemini_key = os.getenv("GEMINI_API_KEY")
         if gemini_key:
-            genai.configure(api_key=gemini_key)
-            self.genai_client = genai
-            logger.info("Google Gemini client initialized")
+            try:
+                genai_module = importlib.import_module("google.generativeai")
+                genai_module.configure(api_key=gemini_key)
+                self.genai_client = genai_module
+                logger.info("Google Gemini client initialized")
+            except Exception as exc:
+                logger.warning("Gemini client disabled due to initialization error: %s", exc)
 
         hf_key = os.getenv("HUGGING_FACE_API_KEY")
         if hf_key:
-            self.hf_client = InferenceClient(api_key=hf_key)
-            logger.info("Hugging Face Llama client initialized")
+            try:
+                hf_module = importlib.import_module("huggingface_hub")
+                self.hf_client = hf_module.InferenceClient(api_key=hf_key)
+                logger.info("Hugging Face Llama client initialized")
+            except Exception as exc:
+                logger.warning("Hugging Face client disabled due to initialization error: %s", exc)
 
     def _list_available_providers(self) -> List[str]:
         """Return a list of configured providers with initialized clients."""

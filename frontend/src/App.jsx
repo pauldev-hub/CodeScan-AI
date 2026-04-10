@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 
 import ErrorBoundary from "./components/Common/ErrorBoundary";
+import PageTransition from "./components/Common/PageTransition";
 import SplashScreen from "./components/Common/SplashScreen";
 import Navbar from "./components/Layout/Navbar";
 import Sidebar from "./components/Layout/Sidebar";
@@ -22,25 +23,32 @@ import PublicOnlyRoute from "./routes/PublicOnlyRoute";
 import { APP_ROUTES } from "./utils/constants";
 
 const ProtectedLayout = ({ children }) => {
+  const location = useLocation();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   return (
     <div className="codescan-shell theme-transition">
       <Navbar onMenuToggle={() => setMobileSidebarOpen((open) => !open)} showMenuButton />
-      <div className="mx-auto grid max-w-[1400px] grid-cols-1 md:grid-cols-[64px_1fr] xl:grid-cols-[200px_1fr]">
+      <div className="codescan-workbench mx-auto grid grid-cols-1 md:grid-cols-[84px_1fr] xl:grid-cols-[240px_1fr]">
         <Sidebar mobileOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
-        <section className="p-4">{children}</section>
+        <section className="codescan-content px-4 pb-6 pt-4 md:px-5 md:pb-8 xl:px-8 xl:pb-10">
+          <PageTransition pageKey={location.pathname}>{children}</PageTransition>
+        </section>
       </div>
     </div>
   );
 };
 
-const PublicLayout = ({ children }) => (
-  <div className="codescan-shell theme-transition">
-    <Navbar />
-    {children}
-  </div>
-);
+const PublicLayout = ({ children }) => {
+  const location = useLocation();
+
+  return (
+    <div className="codescan-shell theme-transition">
+      <Navbar />
+      <PageTransition pageKey={location.pathname}>{children}</PageTransition>
+    </div>
+  );
+};
 
 const App = () => {
   const [showSplash, setShowSplash] = useState(true);

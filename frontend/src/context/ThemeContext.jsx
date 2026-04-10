@@ -4,19 +4,12 @@ import { THEME_STORAGE_KEY } from "../utils/constants";
 
 const ThemeContext = createContext(null);
 
-const getSystemTheme = () => {
-  if (typeof window === "undefined" || !window.matchMedia) {
-    return "light";
-  }
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-};
-
 const getInitialTheme = () => {
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
   if (savedTheme === "light" || savedTheme === "dark") {
     return savedTheme;
   }
-  return getSystemTheme();
+  return "dark";
 };
 
 const hasManualThemeChoice = () => {

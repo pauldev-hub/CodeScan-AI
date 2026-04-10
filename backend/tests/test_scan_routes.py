@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from app.models.scan import Scan
+from app.models.scan import Finding, Scan
 from app.utils.constants import SCAN_STATUS_COMPLETE
 
 
@@ -26,6 +26,28 @@ def test_submit_url_scan_enqueue_failure_returns_503(client, auth_headers):
     assert "worker" in (scan.error_message or "").lower()
 
 
+def test_submit_url_scan_uses_inline_fallback_when_enabled(client, auth_headers):
+    headers, _user = auth_headers(email="scan-inline-fallback@example.com")
+    client.application.config["SCAN_INLINE_FALLBACK_ON_QUEUE_FAILURE"] = True
+
+    class DummyTask:
+        id = "inline-task-456"
+
+    with patch("app.routes.scan.enforce_rate_limit", return_value=True), patch(
+        "app.routes.scan.process_scan_task.delay", side_effect=RuntimeError("broker down")
+    ), patch("app.routes.scan.process_scan_task.apply", return_value=DummyTask()):
+        response = client.post(
+            "/api/scan/url",
+            json={"github_url": "https://github.com/octocat/Hello-World"},
+            headers=headers,
+        )
+
+    assert response.status_code == 202
+    payload = response.get_json()
+    assert payload["celery_task_id"] == "inline-task-456"
+    assert payload["queue_mode"] == "inline_fallback"
+
+
 def test_submit_url_scan_accepted_with_task_id(client, auth_headers):
     headers, _user = auth_headers(email="scan-success@example.com")
 
@@ -44,6 +66,7 @@ def test_submit_url_scan_accepted_with_task_id(client, auth_headers):
     assert response.status_code == 202
     payload = response.get_json()
     assert payload["celery_task_id"] == "task-123"
+    assert payload["queue_mode"] == "celery"
 
 
 def test_results_include_summary_arrays(client, auth_headers):
@@ -72,3 +95,69 @@ def test_results_include_summary_arrays(client, auth_headers):
     assert payload["pros"] == ["Input validation exists"]
     assert payload["cons"] == ["No rate limiting on endpoint"]
     assert payload["refactor_suggestions"] == ["Extract auth checks"]
+
+
+def test_fix_preview_returns_finding_based_preview(client, auth_headers):
+    headers, user_id = auth_headers(email="scan-fix-preview@example.com")
+
+    scan = Scan(
+        user_id=user_id,
+        input_type="paste",
+        input_value="print('hi')",
+        status=SCAN_STATUS_COMPLETE,
+        api_scan_id="fix-preview-scan-id",
+    )
+    from app import db
+
+    db.session.add(scan)
+    db.session.flush()
+
+    finding = Finding(
+        scan_id=scan.id,
+        title="Unsanitized input",
+        description="desc",
+        plain_english="plain",
+        severity="high",
+        category="security",
+        file_path="app.py",
+        line_number=12,
+        code_snippet="query = f\"SELECT * FROM users WHERE id = {user_input}\"",
+        fix_suggestion="Use parameterized queries.",
+        exploit_risk=90,
+    )
+    db.session.add(finding)
+    db.session.commit()
+
+    response = client.post(
+        f"/api/scan/{scan.api_scan_id}/fix-preview",
+        json={"finding_id": finding.id},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["finding_id"] == finding.id
+    assert "Suggested fix" in payload["after"]
+    assert payload["source"] == "scan_finding"
+
+
+def test_fix_preview_requires_finding_id(client, auth_headers):
+    headers, user_id = auth_headers(email="scan-fix-validation@example.com")
+
+    scan = Scan(
+        user_id=user_id,
+        input_type="paste",
+        input_value="print('hi')",
+        status=SCAN_STATUS_COMPLETE,
+        api_scan_id="fix-preview-validation-id",
+    )
+    from app import db
+
+    db.session.add(scan)
+    db.session.commit()
+
+    response = client.post(f"/api/scan/{scan.api_scan_id}/fix-preview", json={}, headers=headers)
+
+    assert response.status_code == 400
+    payload = response.get_json()
+    assert payload["status"] == "validation_error"

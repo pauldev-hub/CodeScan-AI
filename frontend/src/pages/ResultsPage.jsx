@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { MessageSquare, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MessageSquare, RotateCcw, SendHorizonal, Sparkles, X } from "lucide-react";
 import { useLocation, useParams } from "react-router-dom";
 
 import ChatBoundary from "../components/Chat/ChatBoundary";
 import ConnectionStatusDot from "../components/Chat/ConnectionStatusDot";
 import ErrorBoundary from "../components/Common/ErrorBoundary";
 import Panel from "../components/Common/Panel";
+import ScrollReveal from "../components/Common/ScrollReveal";
 import { ChatBubbleSkeleton, FindingCardSkeleton, ScoreRingSkeleton, StatCardSkeleton } from "../components/Common/Skeletons";
 import BeginnerModeToggle from "../components/Results/BeginnerModeToggle";
 import CodeDiffView from "../components/Results/CodeDiffView";
@@ -24,7 +25,7 @@ import { acquireLock, releaseLock } from "../utils/storage";
 const ResultsPage = () => {
   const { scanId } = useParams();
   const location = useLocation();
-  const { messages, status, sendMessage, isStreaming, scanCompleteEvent } = useAIChat(scanId);
+  const { messages, status, sendMessage, isStreaming, scanCompleteEvent, clearMessages } = useAIChat(scanId);
   const { beginnerMode, toggleBeginnerMode } = useBeginnerMode();
   const [draft, setDraft] = useState("");
   const [results, setResults] = useState(null);
@@ -37,6 +38,7 @@ const ResultsPage = () => {
   });
   const [chatOpen, setChatOpen] = useState(false);
   const [isDesktopChat, setIsDesktopChat] = useState(() => window.matchMedia("(min-width: 1280px)").matches);
+  const messagesRef = useRef(null);
 
   const fetchResults = useCallback(async () => {
     setResultsLoading(true);
@@ -86,6 +88,13 @@ const ResultsPage = () => {
     return () => media.removeEventListener("change", onChange);
   }, []);
 
+  useEffect(() => {
+    if (!messagesRef.current) {
+      return;
+    }
+    messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+  }, [messages]);
+
   const onSend = () => {
     if (!draft.trim()) {
       return;
@@ -93,6 +102,26 @@ const ResultsPage = () => {
     sendMessage(draft);
     setDraft("");
   };
+
+  const onComposerKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      onSend();
+    }
+  };
+
+  const statusCopy = useMemo(() => {
+    if (status === "connected") {
+      return "Connected to the scan room";
+    }
+    if (status === "reconnecting") {
+      return "Reconnecting to chat";
+    }
+    if (status === "disconnected") {
+      return "Chat is offline for the moment";
+    }
+    return "Connecting to AI assistant";
+  }, [status]);
 
   const onGenerateFix = async (finding) => {
     if (!finding?.id || fixState.loadingFor) {
@@ -124,16 +153,27 @@ const ResultsPage = () => {
   };
 
   const ChatPanel = ({ onClose }) => (
-    <aside className="rounded-[10px] border border-border bg-bg2 p-3">
-      <div className="flex items-center justify-between border-b border-border pb-3">
-        <p className="text-sm font-semibold">AI Chat</p>
+    <aside className="codescan-glass rounded-[26px] bg-[color:var(--panel)] p-4">
+      <div className="flex items-center justify-between border-b border-border pb-4">
+        <div>
+          <p className="text-sm font-semibold">AI Chat</p>
+          <p className="mt-1 text-xs text-text2">{statusCopy}</p>
+        </div>
         <div className="flex items-center gap-2">
           <ConnectionStatusDot status={status} />
+          <button
+            type="button"
+            onClick={clearMessages}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-bg3 text-text"
+            aria-label="Clear chat"
+          >
+            <RotateCcw size={14} />
+          </button>
           {onClose ? (
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-bg3 text-text"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-bg3 text-text"
               aria-label="Close chat"
             >
               <X size={14} />
@@ -142,30 +182,50 @@ const ResultsPage = () => {
         </div>
       </div>
 
-      <div className="mt-3 space-y-2">
+      <div ref={messagesRef} className="codescan-chat-scroll mt-4 flex max-h-[420px] min-h-[320px] flex-col gap-3 overflow-auto pr-1">
         {!messages.length ? <ChatBubbleSkeleton /> : null}
         {messages.map((message, index) => (
           <div
             key={`${message.role}-${index}`}
-            className={`max-w-[90%] rounded-xl px-3 py-2 text-sm ${
-              message.role === "user" ? "ml-auto bg-accent text-white" : "bg-bg3 text-text"
+            className={`max-w-[92%] whitespace-pre-line rounded-2xl px-4 py-3 text-sm leading-6 ${
+              message.role === "user"
+                ? "ml-auto bg-[linear-gradient(135deg,var(--accent),var(--accent-2))] text-[#23150c]"
+                : message.role === "system"
+                  ? "border border-border bg-bg3/70 text-text2"
+                  : "bg-bg3 text-text"
             }`}
           >
+            {message.role === "assistant" ? (
+              <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-text3">
+                <Sparkles size={12} className="text-accent" />
+                Assistant
+              </div>
+            ) : null}
             {message.text}
           </div>
         ))}
       </div>
 
-      <div className="mt-3 flex gap-2">
-        <input
+      <div className="mt-4 rounded-[22px] border border-border bg-bg3/70 p-3">
+        <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          className="w-full rounded-lg border border-border bg-bg3 px-3 py-2 text-sm"
-          placeholder="Ask about this scan"
+          onKeyDown={onComposerKeyDown}
+          className="min-h-[92px] w-full resize-none border-0 bg-transparent px-1 py-1 text-sm text-text outline-none placeholder:text-text3"
+          placeholder="Ask about the highest risk, request a safer fix, or ask what to prioritize first."
         />
-        <button type="button" onClick={onSend} className="rounded-lg border border-border bg-accent px-3 text-sm font-semibold text-white">
-          Send
-        </button>
+        <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
+          <p className="text-xs text-text2">Press Enter to send. Use Shift+Enter for a new line.</p>
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={!draft.trim() || isStreaming}
+            className="inline-flex items-center gap-2 rounded-xl border border-[color:var(--accent)] bg-[linear-gradient(135deg,var(--accent),var(--accent-2))] px-4 py-2 text-sm font-semibold text-[#23150c] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <SendHorizonal size={14} />
+            Send
+          </button>
+        </div>
       </div>
 
       {isStreaming ? <p className="mt-2 text-xs text-text2">AI is typing...</p> : null}
@@ -173,7 +233,7 @@ const ResultsPage = () => {
   );
 
   return (
-    <main className="space-y-4">
+    <main className="space-y-5">
       {!isDesktopChat ? (
         <div className="flex justify-end">
           <button
@@ -187,9 +247,10 @@ const ResultsPage = () => {
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_280px]">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <ErrorBoundary>
           <section className="space-y-4">
+          <ScrollReveal>
           <Panel title="Scan Overview" description={`Scan: ${scanId}`}>
             {resultsLoading && !results ? (
               <div className="grid gap-4 md:grid-cols-[120px_1fr]">
@@ -234,7 +295,9 @@ const ResultsPage = () => {
               </div>
             ) : null}
           </Panel>
+          </ScrollReveal>
 
+          <ScrollReveal delay={90}>
           <Panel title="Findings" description="Result cards and explanations load here.">
             <div className="mb-3 flex items-center justify-end">
               <BeginnerModeToggle enabled={beginnerMode} onToggle={toggleBeginnerMode} />
@@ -283,18 +346,23 @@ const ResultsPage = () => {
               <p className="text-sm text-text2">No findings were detected for this scan.</p>
             ) : null}
           </Panel>
+          </ScrollReveal>
 
           {results ? (
+            <ScrollReveal delay={130}>
             <Panel title="Export & Share" description="Download reports or create a shareable public link.">
               <ExportShareBar scanId={scanId} />
             </Panel>
+            </ScrollReveal>
           ) : null}
           </section>
         </ErrorBoundary>
 
         {isDesktopChat ? (
           <ChatBoundary>
-            <ChatPanel />
+            <div className="xl:sticky xl:top-[84px]">
+              <ChatPanel />
+            </div>
           </ChatBoundary>
         ) : null}
       </div>

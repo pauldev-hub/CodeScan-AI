@@ -10,10 +10,8 @@ from app.utils.security import get_session_revoke_marker
 
 
 CHAT_SYSTEM_PROMPT = (
-    "You are a friendly security assistant helping a beginner understand their code scan results. "
-    "Answer in plain English. No jargon. Be concise. When referencing issues from the scan, "
-    "explain what they mean in real-world terms and suggest simple fixes. "
-    "Context about their scan will be provided with each message."
+    "You are a helpful code review assistant. Return a JSON object with issues, health_score, pros, cons, "
+    "and refactor_suggestions. Keep issue plain_english easy for beginners. Prefer actionable fixes over abstract advice."
 )
 
 
@@ -124,10 +122,10 @@ def register_socket_handlers(socketio):
                 service.analyze_code(context_blob, CHAT_SYSTEM_PROMPT, scan.id)
             )
         except Exception:
-            emit("error", {"msg": "Chat analysis failed"})
-            return
+            provider_used = "local_fallback"
+            analysis = _build_local_chat_fallback_analysis(scan, message)
 
-        reply_text = _build_reply_text(message, analysis)
+        reply_text = _build_reply_text(message, analysis, scan)
         chunks = _chunk_text(reply_text)
         for chunk in chunks[:-1]:
             emit(
@@ -242,30 +240,92 @@ def build_chat_message(scan_results: Dict[str, Any], user_message: str) -> str:
     return f"{context}\n\nUser question: {user_message}"
 
 
-def _build_reply_text(question: str, analysis: Dict[str, Any]) -> str:
+def _build_reply_text(question: str, analysis: Dict[str, Any], scan: Scan) -> str:
+    question_text = (question or "").strip()
+    ranked_findings = scan.findings.order_by(Finding.exploit_risk.desc(), Finding.id.asc()).limit(3).all()
     issues = analysis.get("issues") or []
-    if not issues:
+
+    if not ranked_findings and not issues:
         return (
-            f"You asked: {question}\n"
-            "I did not detect new issues from the current scan context. "
-            "If you share a specific file/line, I can explain it in more detail."
+            f"Question: {question_text}\n\n"
+            "This scan does not currently contain recorded findings.\n"
+            "If you rerun the scan with more code context, I can explain the results in detail."
         )
 
-    top_issue = issues[0]
-    title = top_issue.get("title") or "Potential issue"
-    severity = top_issue.get("severity") or "medium"
-    plain = top_issue.get("plain_english") or top_issue.get("description") or ""
-    fix = top_issue.get("fix_suggestion") or "No fix suggestion provided"
-
-    return (
-        f"You asked: {question}\n"
-        f"Top risk: {title} ({severity}).\n"
-        f"Why it matters: {plain}\n"
-        f"Recommended fix: {fix}"
+    answer_lines = [f"Question: {question_text}", ""]
+    answer_lines.append(
+        f"Scan summary: health score {scan.health_score if scan.health_score is not None else 'n/a'}/100 with {scan.total_findings or len(ranked_findings)} finding(s)."
     )
 
+    lower_question = question_text.lower()
+    wants_fix = any(term in lower_question for term in ("fix", "solve", "patch", "change"))
+    wants_priority = any(term in lower_question for term in ("important", "priority", "first", "urgent"))
 
-def _chunk_text(text: str, chunk_size: int = 120) -> List[str]:
+    selected_findings = ranked_findings or []
+    if wants_priority:
+        answer_lines.append("Focus first on the findings with the highest exploit risk or severity.")
+    elif wants_fix:
+        answer_lines.append("Here are the most practical fixes to start with.")
+    else:
+        answer_lines.append("Here is the clearest explanation of the highest-risk findings in this scan.")
+
+    for index, finding in enumerate(selected_findings[:3], start=1):
+        answer_lines.extend(
+            [
+                "",
+                f"{index}. {finding.title} ({finding.severity})",
+                f"Why it matters: {finding.plain_english or finding.description}",
+                f"Where: {finding.file_path}:{finding.line_number or 'n/a'}",
+                f"Fix: {finding.fix_suggestion or 'Review the surrounding code and remove the unsafe pattern.'}",
+            ]
+        )
+
+    if issues and not selected_findings:
+        top_issue = issues[0]
+        answer_lines.extend(
+            [
+                "",
+                f"Top issue: {top_issue.get('title') or 'Potential issue'} ({top_issue.get('severity') or 'medium'})",
+                f"Why it matters: {top_issue.get('plain_english') or top_issue.get('description') or 'This issue increases security risk.'}",
+                f"Fix: {top_issue.get('fix_suggestion') or 'Review the code path and apply the safer alternative.'}",
+            ]
+        )
+
+    answer_lines.extend(
+        [
+            "",
+            "Next step: open the finding card you want to work on, then use the fix preview and ask a follow-up like 'show me the safest fix for finding 2'.",
+        ]
+    )
+
+    return "\n".join(answer_lines)
+
+
+def _build_local_chat_fallback_analysis(scan: Scan, question: str) -> Dict[str, Any]:
+    del question
+    top_finding = scan.findings.order_by(Finding.exploit_risk.desc(), Finding.id.desc()).first()
+    if not top_finding:
+        return {
+            "issues": [],
+            "health_score": scan.health_score,
+        }
+
+    issue = {
+        "title": top_finding.title,
+        "severity": top_finding.severity,
+        "plain_english": top_finding.plain_english or top_finding.description,
+        "description": top_finding.description,
+        "fix_suggestion": top_finding.fix_suggestion,
+        "file_path": top_finding.file_path,
+        "line_number": top_finding.line_number,
+    }
+    return {
+        "issues": [issue],
+        "health_score": scan.health_score,
+    }
+
+
+def _chunk_text(text: str, chunk_size: int = 180) -> List[str]:
     if not text:
         return [""]
     return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]

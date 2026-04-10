@@ -54,7 +54,12 @@ const SidebarContent = ({ mobileOpen, onClose }) => {
 
   return (
     <>
-      <aside className="hidden w-[64px] shrink-0 border-r border-border bg-bg2 p-3 md:block xl:w-[200px]">
+      <aside className="hidden shrink-0 border-r border-border bg-[color:var(--panel)] p-4 md:block md:w-[84px] xl:w-[240px]">
+        <div className="mb-4 rounded-[20px] border border-border bg-bg3/70 p-3 xl:p-4">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-text3">Operator</p>
+          <p className="mt-2 text-sm font-semibold text-text">{user?.username || "Secure reviewer"}</p>
+          <p className="mt-1 text-xs text-text2">{user?.plan || "free"} plan</p>
+        </div>
         <SidebarNav linksToRender={linksToRender} />
       </aside>
 
@@ -66,7 +71,7 @@ const SidebarContent = ({ mobileOpen, onClose }) => {
           aria-label="Close navigation"
         />
         <aside
-          className={`absolute left-0 top-0 h-full w-[240px] border-r border-border bg-bg2 p-3 shadow-xl transition-transform duration-300 ${
+          className={`absolute left-0 top-0 h-full w-[260px] border-r border-border bg-[color:var(--panel-strong)] p-4 shadow-xl transition-transform duration-300 ${
             mobileOpen ? "translate-x-0" : "-translate-x-full"
           }`}
         >

@@ -12,6 +12,7 @@ const client = axios.create({
 let refreshPromise = null;
 
 const getAuthState = () => getStoredJson(AUTH_STORAGE_KEY, null);
+const AUTH_ROUTES = new Set([API_PATHS.login, API_PATHS.signup, API_PATHS.refresh, API_PATHS.logout]);
 
 client.interceptors.request.use((config) => {
   const authState = getAuthState();
@@ -57,7 +58,12 @@ client.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config || {};
-    if (error?.response?.status !== 401 || originalRequest.__retry) {
+    const requestPath = originalRequest.url;
+    const shouldSkipRefresh =
+      AUTH_ROUTES.has(requestPath) ||
+      !getAuthState()?.refreshToken;
+
+    if (error?.response?.status !== 401 || originalRequest.__retry || shouldSkipRefresh) {
       return Promise.reject(mapApiError(error));
     }
 

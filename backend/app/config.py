@@ -1,6 +1,19 @@
 import os
 from datetime import timedelta
 
+from dotenv import load_dotenv
+
+
+BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+load_dotenv(os.path.join(BACKEND_ROOT, ".env"))
+
+
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 
 class BaseConfig:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
@@ -16,8 +29,14 @@ class BaseConfig:
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173")
 
     REDIS_URL = os.getenv("REDIS_URL")
-    CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
-    CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
+    CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL or "redis://localhost:6379/0")
+    CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL or "redis://localhost:6379/1")
+    CELERY_TASK_ALWAYS_EAGER = _env_bool("CELERY_TASK_ALWAYS_EAGER", False)
+    CELERY_TASK_STORE_EAGER_RESULT = _env_bool("CELERY_TASK_STORE_EAGER_RESULT", False)
+    CELERY_WORKER_POOL = os.getenv("CELERY_WORKER_POOL", "solo" if os.name == "nt" else "prefork")
+    SCAN_INLINE_FALLBACK_ON_QUEUE_FAILURE = _env_bool("SCAN_INLINE_FALLBACK_ON_QUEUE_FAILURE", False)
+    SCAN_WATCHDOG_INLINE_ON_PENDING = _env_bool("SCAN_WATCHDOG_INLINE_ON_PENDING", False)
+    SCAN_PENDING_WATCHDOG_DELAY_SECONDS = int(os.getenv("SCAN_PENDING_WATCHDOG_DELAY_SECONDS", "20"))
 
     RATE_LIMIT_AUTH_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_AUTH_MAX_REQUESTS", "20"))
     RATE_LIMIT_AUTH_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_AUTH_WINDOW_SECONDS", "60"))
@@ -27,11 +46,15 @@ class BaseConfig:
 
 class DevelopmentConfig(BaseConfig):
     DEBUG = True
+    SCAN_INLINE_FALLBACK_ON_QUEUE_FAILURE = _env_bool("SCAN_INLINE_FALLBACK_ON_QUEUE_FAILURE", True)
+    SCAN_WATCHDOG_INLINE_ON_PENDING = _env_bool("SCAN_WATCHDOG_INLINE_ON_PENDING", True)
 
 
 class TestingConfig(BaseConfig):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    CELERY_TASK_ALWAYS_EAGER = True
+    SCAN_INLINE_FALLBACK_ON_QUEUE_FAILURE = _env_bool("SCAN_INLINE_FALLBACK_ON_QUEUE_FAILURE", False)
 
 
 class ProductionConfig(BaseConfig):

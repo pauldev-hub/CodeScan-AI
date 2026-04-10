@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
+import { ArrowUpRight, FileCode2, FolderOpen, Github, ShieldCheck, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import Button from "../components/Common/Button";
 import Card from "../components/Common/Card";
+import ScrollReveal from "../components/Common/ScrollReveal";
 import Tabs from "../components/Common/Tabs";
 import { submitScanByPaste, submitScanByUpload, submitScanByUrl } from "../services/scanService";
 import { APP_ROUTES } from "../utils/constants";
@@ -26,7 +28,20 @@ const mapScanSubmitError = (apiError) => {
     return "Scan limit reached: 10 scans per hour. Wait for your hourly window to reset, then retry.";
   }
   if (apiError?.status === 400) {
-    return "Scan input is invalid. Check the URL, code snippet, or files and try again.";
+    const message = apiError?.message || "";
+    if (/github/i.test(message)) {
+      return "The repository URL is invalid. Paste a public GitHub repository URL like https://github.com/owner/repo.";
+    }
+    if (/code is required/i.test(message)) {
+      return "Paste some code into the editor before starting the scan.";
+    }
+    if (/unsupported file type/i.test(message)) {
+      return "One or more uploaded files are not supported. Use code files such as .js, .ts, .py, .java, .go, or .rs.";
+    }
+    if (/file too large/i.test(message) || /total upload size/i.test(message)) {
+      return "Your upload is too large for the current limits. Remove the biggest files and retry.";
+    }
+    return message || "Scan input is invalid. Check the URL, code snippet, or files and try again.";
   }
   if (apiError?.status === 503) {
     return "Scan worker is temporarily unavailable. Retry in a few moments.";
@@ -35,6 +50,9 @@ const mapScanSubmitError = (apiError) => {
 };
 
 const getResultsRoute = (scanId) => APP_ROUTES.results.replace(":scanId", scanId);
+
+const getLineNumbers = (code) =>
+  Array.from({ length: Math.max(16, (code || "").split("\n").length) }, (_, index) => index + 1).join("\n");
 
 const ScanPage = () => {
   const [mode, setMode] = useState("url");
@@ -115,69 +133,123 @@ const ScanPage = () => {
   };
 
   return (
-    <main className="space-y-4">
-      <Card>
-        <h1 className="text-xl font-bold">New Scan</h1>
-        <p className="mt-1 text-sm text-text2">Choose an input mode to start your security analysis.</p>
-        <div className="mt-4">
-          <Tabs tabs={tabs} activeTab={mode} onChange={setMode} />
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {mode === "url" ? (
-            <input
-              className="w-full rounded-lg border border-border bg-bg3 px-3 py-2"
-              value={githubUrl}
-              onChange={(e) => setGithubUrl(e.target.value)}
-              placeholder="https://github.com/owner/repo"
-            />
-          ) : null}
-
-          {mode === "paste" ? (
-            <>
-              <div className="grid gap-2 sm:grid-cols-[1fr_220px]">
-                <textarea
-                  className="min-h-40 w-full rounded-lg border border-border bg-bg3 px-3 py-2 font-mono text-sm"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="Paste code here..."
-                />
-                <select
-                  className="h-10 rounded-lg border border-border bg-bg3 px-3 py-2 text-sm"
-                  value={language}
-                  onChange={(event) => setLanguage(event.target.value)}
-                >
-                  <option value="javascript">JavaScript</option>
-                  <option value="python">Python</option>
-                  <option value="typescript">TypeScript</option>
-                  <option value="java">Java</option>
-                  <option value="go">Go</option>
-                </select>
-              </div>
-            </>
-          ) : null}
-
-          {mode === "upload" ? (
-            <div className="space-y-2">
-              <input
-                className="w-full rounded-lg border border-border bg-bg3 px-3 py-2 text-sm"
-                type="file"
-                multiple
-                onChange={(event) => setFiles(Array.from(event.target.files || []))}
-              />
-              <p className="text-xs text-text2">Selected files: {files.length}</p>
+    <main className="space-y-5">
+      <ScrollReveal className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+        <section className="codescan-editor-surface">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 md:px-5">
+            <div>
+              <p className="font-mono text-xs uppercase tracking-[0.2em] text-accent">Scan workspace</p>
+              <h1 className="mt-2 text-2xl font-bold text-text md:text-3xl">Open a new review session</h1>
             </div>
-          ) : null}
+            <span className="rounded-full border border-border bg-bg3 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-text2">
+              editor mode
+            </span>
+          </div>
 
-          {error ? <p className="text-sm text-red">{error}</p> : null}
-          <Button isLoading={loading} onClick={submit}>
-            Start Scan
-          </Button>
-          <p className="text-xs text-text2">
-            If you hit rate limits, wait for your hourly quota window to reset before retrying.
-          </p>
-        </div>
-      </Card>
+          <div className="px-4 py-4 md:px-5">
+            <Tabs tabs={tabs} activeTab={mode} onChange={setMode} />
+
+            <div className="mt-4">
+              {mode === "url" ? (
+                <div className="rounded-[24px] border border-border bg-bg3/60 p-4">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-text">
+                    <Github size={16} className="text-accent" />
+                    Repository source
+                  </div>
+                  <input
+                    className="mt-4 w-full rounded-2xl border border-border bg-bg2 px-4 py-3 text-sm"
+                    value={githubUrl}
+                    onChange={(e) => setGithubUrl(e.target.value)}
+                    placeholder="https://github.com/owner/repo"
+                  />
+                  <p className="mt-3 text-xs text-text2">Public GitHub repositories work best for the current scanner.</p>
+                </div>
+              ) : null}
+
+              {mode === "paste" ? (
+                <div className="codescan-editor-surface mt-1">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-text">
+                      <FileCode2 size={16} className="text-accent" />
+                      Paste code
+                    </div>
+                    <select
+                      className="h-10 rounded-xl border border-border bg-bg3 px-3 py-2 text-sm"
+                      value={language}
+                      onChange={(event) => setLanguage(event.target.value)}
+                    >
+                      <option value="javascript">JavaScript</option>
+                      <option value="python">Python</option>
+                      <option value="typescript">TypeScript</option>
+                      <option value="java">Java</option>
+                      <option value="go">Go</option>
+                    </select>
+                  </div>
+                  <div className="codescan-editor-grid">
+                    <pre className="codescan-editor-gutter">{getLineNumbers(code)}</pre>
+                    <textarea
+                      className="codescan-editor-textarea"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      placeholder="Paste your code here. The scanner will review the current snippet and explain the risk in plain English."
+                      spellCheck="false"
+                    />
+                  </div>
+                  <div className="codescan-editor-meta flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs text-text2">
+                    <span>Language: {language}</span>
+                    <span>Characters: {code.length}</span>
+                  </div>
+                </div>
+              ) : null}
+
+              {mode === "upload" ? (
+                <div className="rounded-[24px] border border-border bg-bg3/60 p-4">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-text">
+                    <FolderOpen size={16} className="text-accent" />
+                    Upload source files
+                  </div>
+                  <input
+                    className="mt-4 w-full rounded-2xl border border-dashed border-border bg-bg2 px-4 py-10 text-sm"
+                    type="file"
+                    multiple
+                    onChange={(event) => setFiles(Array.from(event.target.files || []))}
+                  />
+                  <p className="mt-3 text-xs text-text2">Selected files: {files.length}</p>
+                </div>
+              ) : null}
+            </div>
+
+            {error ? <p className="mt-4 text-sm text-red">{error}</p> : null}
+
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <Button isLoading={loading} onClick={submit} disabled={loading}>
+                Start Scan
+                <ArrowUpRight size={16} />
+              </Button>
+              <p className="text-xs text-text2">
+                If you hit rate limits, wait for your hourly quota window to reset before retrying.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <Card className="grid gap-3 self-start">
+          <div className="rounded-[20px] border border-border bg-bg3/70 p-4">
+            <div className="flex items-center gap-2 text-text3">
+              <ShieldCheck size={16} />
+              <span className="text-[11px] uppercase tracking-[0.16em]">What you get</span>
+            </div>
+            <p className="mt-3 text-sm leading-7 text-text2">Severity breakdown, health score, plain-English explanations, and an AI chat panel tied to the scan context.</p>
+          </div>
+          <div className="rounded-[20px] border border-border bg-bg3/70 p-4">
+            <div className="flex items-center gap-2 text-text3">
+              <Sparkles size={16} />
+              <span className="text-[11px] uppercase tracking-[0.16em]">Review style</span>
+            </div>
+            <p className="mt-3 text-sm leading-7 text-text2">The workspace is tuned for quick triage first, then deeper learning and follow-up fixes.</p>
+          </div>
+        </Card>
+      </ScrollReveal>
     </main>
   );
 };

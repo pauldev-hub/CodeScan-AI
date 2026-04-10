@@ -1,7 +1,10 @@
-from flask import Blueprint, request
+import threading
+import time
+import uuid
+
+from flask import Blueprint, current_app, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
-from app.services.github_service import GitHubRateLimitError
 from app.services.scan_service import ScanService
 from app.tasks.scan_tasks import process_scan_task
 from app.utils.constants import (
@@ -20,13 +23,96 @@ from app.utils.validators import is_allowed_upload, is_valid_github_url
 scan_bp = Blueprint("scan", __name__, url_prefix="/api/scan")
 
 
+def _start_pending_scan_watchdog(scan_id):
+    if not current_app.config.get("SCAN_WATCHDOG_INLINE_ON_PENDING", False):
+        return
+
+    delay_seconds = max(5, int(current_app.config.get("SCAN_PENDING_WATCHDOG_DELAY_SECONDS", 20)))
+    flask_app = current_app._get_current_object()
+
+    def _watch_pending_scan_then_run_inline(target_scan_id):
+        time.sleep(delay_seconds)
+        with flask_app.app_context():
+            from app.models.scan import Scan
+
+            scan = Scan.query.get(target_scan_id)
+            if not scan:
+                return
+            if scan.status != "pending":
+                return
+
+            flask_app.logger.warning(
+                "Scan watchdog detected pending scan_id=%s after %ss; running inline fallback.",
+                target_scan_id,
+                delay_seconds,
+            )
+            try:
+                ScanService.process_scan(target_scan_id)
+            except Exception:
+                flask_app.logger.exception(
+                    "Scan watchdog inline fallback failed for scan_id=%s",
+                    target_scan_id,
+                )
+
+    watcher = threading.Thread(
+        target=_watch_pending_scan_then_run_inline,
+        args=(scan_id,),
+        daemon=True,
+        name=f"codescan-watchdog-{scan_id}",
+    )
+    watcher.start()
+
+
 def _enqueue_scan(scan):
     try:
         task = process_scan_task.delay(scan.id)
         scan.celery_task_id = task.id
-        return True
-    except Exception:
-        return False
+        _start_pending_scan_watchdog(scan.id)
+        return True, "celery"
+    except Exception as exc:
+        if not current_app.config.get("SCAN_INLINE_FALLBACK_ON_QUEUE_FAILURE", False):
+            return False, None
+
+        current_app.logger.warning(
+            "Falling back to inline scan execution for scan_id=%s after Celery enqueue failure: %s",
+            scan.id,
+            exc,
+        )
+
+        try:
+            if current_app.config.get("TESTING", False):
+                task = process_scan_task.apply(args=[scan.id], throw=True)
+                scan.celery_task_id = task.id
+                return True, "inline_fallback"
+
+            flask_app = current_app._get_current_object()
+            fallback_task_id = f"inline-{uuid.uuid4()}"
+
+            def _run_inline_scan_background(scan_id):
+                with flask_app.app_context():
+                    try:
+                        ScanService.process_scan(scan_id)
+                    except Exception:
+                        flask_app.logger.exception(
+                            "Inline background fallback failed for scan_id=%s",
+                            scan_id,
+                        )
+
+            worker = threading.Thread(
+                target=_run_inline_scan_background,
+                args=(scan.id,),
+                daemon=True,
+                name=f"codescan-inline-{scan.id}",
+            )
+            worker.start()
+
+            scan.celery_task_id = fallback_task_id
+            return True, "inline_background"
+        except Exception as fallback_exc:
+            current_app.logger.exception(
+                "Inline scan fallback failed for scan_id=%s: %s", scan.id, fallback_exc
+            )
+            return False, None
 
 
 @scan_bp.post("/url")
@@ -47,7 +133,8 @@ def submit_url_scan():
         return error_response("Invalid GitHub URL", "validation_error", 400)
 
     scan = ScanService.create_scan(user_id, "url", github_url)
-    if not _enqueue_scan(scan):
+    enqueued, queue_mode = _enqueue_scan(scan)
+    if not enqueued:
         ScanService.mark_scan_enqueue_failed(scan, "Scan worker is unavailable. Please retry.")
         return error_response("Scan worker unavailable", "service_unavailable", 503)
 
@@ -60,6 +147,7 @@ def submit_url_scan():
             "scan_id": scan.api_scan_id,
             "status": scan.status,
             "celery_task_id": scan.celery_task_id,
+            "queue_mode": queue_mode,
             "created_at": scan.created_at.isoformat(),
         },
         202,
@@ -88,7 +176,8 @@ def submit_paste_scan():
 
     input_value = f"// language: {language}\n{code}"
     scan = ScanService.create_scan(user_id, "paste", input_value, file_count=1, code_size_bytes=len(code.encode("utf-8")))
-    if not _enqueue_scan(scan):
+    enqueued, queue_mode = _enqueue_scan(scan)
+    if not enqueued:
         ScanService.mark_scan_enqueue_failed(scan, "Scan worker is unavailable. Please retry.")
         return error_response("Scan worker unavailable", "service_unavailable", 503)
 
@@ -101,6 +190,7 @@ def submit_paste_scan():
             "scan_id": scan.api_scan_id,
             "status": scan.status,
             "celery_task_id": scan.celery_task_id,
+            "queue_mode": queue_mode,
         },
         202,
     )
@@ -137,7 +227,8 @@ def submit_upload_scan():
 
     combined = "\n".join(chunks)
     scan = ScanService.create_scan(user_id, "upload", combined, file_count=len(files), code_size_bytes=total_size)
-    if not _enqueue_scan(scan):
+    enqueued, queue_mode = _enqueue_scan(scan)
+    if not enqueued:
         ScanService.mark_scan_enqueue_failed(scan, "Scan worker is unavailable. Please retry.")
         return error_response("Scan worker unavailable", "service_unavailable", 503)
 
@@ -151,6 +242,7 @@ def submit_upload_scan():
             "status": scan.status,
             "file_count": len(files),
             "celery_task_id": scan.celery_task_id,
+            "queue_mode": queue_mode,
         },
         202,
     )
@@ -215,6 +307,34 @@ def scan_results(scan_id):
     if scan.status != SCAN_STATUS_COMPLETE:
         return error_response("Results not ready", "not_found", 404)
     return success_response(ScanService.build_results_payload(scan))
+
+
+@scan_bp.post("/<scan_id>/fix-preview")
+@jwt_required()
+def scan_fix_preview(scan_id):
+    user_id = int(get_jwt_identity())
+    scan = ScanService.get_scan_by_api_id(user_id, scan_id)
+    if not scan:
+        return error_response("Scan not found", "not_found", 404)
+    if scan.status != SCAN_STATUS_COMPLETE:
+        return error_response("Results not ready", "not_found", 404)
+
+    payload = request.get_json(silent=True) or {}
+    finding_id = payload.get("finding_id")
+    if not finding_id:
+        return error_response("finding_id is required", "validation_error", 400)
+
+    try:
+        finding_id = int(finding_id)
+    except (TypeError, ValueError):
+        return error_response("finding_id must be an integer", "validation_error", 400)
+
+    finding = scan.findings.filter_by(id=finding_id).first()
+    if not finding:
+        return error_response("Finding not found for this scan", "not_found", 404)
+
+    preview = ScanService.build_fix_preview(scan, finding, payload.get("suggestion"))
+    return success_response(preview)
 
 
 @scan_bp.delete("/<scan_id>")

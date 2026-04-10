@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import List
@@ -149,6 +150,37 @@ class ScanService:
         }
 
     @staticmethod
+    def build_fix_preview(scan, finding, override_suggestion=None):
+        suggestion = (override_suggestion or finding.fix_suggestion or "").strip()
+        before = finding.code_snippet or ""
+
+        intro = f"# Suggested fix for: {finding.title}"
+        guidance = suggestion or "Apply the secure coding guidance for this finding."
+
+        if before:
+            after = (
+                f"{intro}\n"
+                f"# {guidance}\n"
+                f"# NOTE: Review and adapt to your full file context before applying.\n"
+                f"{before}"
+            )
+        else:
+            after = (
+                f"{intro}\n"
+                f"# {guidance}\n"
+                "# Original code snippet was not available in scan results."
+            )
+
+        return {
+            "scan_id": scan.api_scan_id,
+            "finding_id": finding.id,
+            "before": before,
+            "after": after,
+            "message": "Fix preview generated from scan finding metadata.",
+            "source": "scan_finding",
+        }
+
+    @staticmethod
     def _resolve_scan_input(scan):
         if scan.input_type == "paste":
             return scan.input_value or ""
@@ -169,16 +201,89 @@ class ScanService:
             if cached:
                 return json.loads(cached)
 
-        from app.services.ai_provider import get_ai_provider_service
+        try:
+            from app.services.ai_provider import get_ai_provider_service
 
-        service = get_ai_provider_service()
-        result, provider_used = asyncio.run(service.analyze_code(source_text, SYSTEM_PROMPT, scan.id))
-        result["provider_used"] = provider_used
+            service = get_ai_provider_service()
+            result, provider_used = asyncio.run(service.analyze_code(source_text, SYSTEM_PROMPT, scan.id))
+            result["provider_used"] = provider_used
+        except Exception as exc:
+            logger.warning(
+                "Scan %s AI analysis failed; using local fallback analyzer: %s",
+                scan.id,
+                exc,
+            )
+            result = ScanService._build_local_fallback_analysis(source_text, str(exc))
+            result["provider_used"] = "local_fallback"
 
         if redis_client:
             redis_client.setex(f"scan:analysis:{cache_key}", 3600, json.dumps(result))
 
         return result
+
+    @staticmethod
+    def _build_local_fallback_analysis(source_text, failure_reason):
+        issues = []
+        lower_text = (source_text or "").lower()
+
+        if "eval(" in lower_text or "exec(" in lower_text:
+            issues.append(
+                {
+                    "title": "Dynamic code execution detected",
+                    "description": "The code appears to use eval/exec, which can execute attacker-controlled input.",
+                    "plain_english": "Your code runs text as code. If user input reaches this path, attackers can run harmful commands.",
+                    "severity": "high",
+                    "category": "security",
+                    "file_path": "snippet",
+                    "line_number": None,
+                    "fix_suggestion": "Avoid eval/exec on untrusted input. Use strict parsing or whitelisted operations.",
+                    "exploit_risk": 85,
+                    "cwe_id": "CWE-95",
+                }
+            )
+
+        if re.search(r"select\s+\*\s+from", lower_text) and ("+" in source_text or "f\"" in source_text or "format(" in lower_text):
+            issues.append(
+                {
+                    "title": "Potential SQL injection pattern",
+                    "description": "The query text appears to be built through string concatenation/interpolation.",
+                    "plain_english": "A database query seems to be built using raw text pieces. That can let malicious input change the query.",
+                    "severity": "critical",
+                    "category": "security",
+                    "file_path": "snippet",
+                    "line_number": None,
+                    "fix_suggestion": "Use parameterized queries/placeholders instead of string building.",
+                    "exploit_risk": 92,
+                    "cwe_id": "CWE-89",
+                }
+            )
+
+        if "password" in lower_text and ("=" in source_text) and ("'" in source_text or '"' in source_text):
+            issues.append(
+                {
+                    "title": "Possible hardcoded credential",
+                    "description": "A password-like identifier appears assigned to a literal value.",
+                    "plain_english": "A password looks hardcoded in the code. Secrets in source can leak and be abused.",
+                    "severity": "medium",
+                    "category": "security",
+                    "file_path": "snippet",
+                    "line_number": None,
+                    "fix_suggestion": "Move secrets to environment variables or a secrets manager.",
+                    "exploit_risk": 60,
+                    "cwe_id": "CWE-798",
+                }
+            )
+
+        health_score = max(10, 100 - (len(issues) * 20))
+        return {
+            "issues": issues,
+            "health_score": health_score,
+            "pros": ["Scan completed using local resilience fallback."],
+            "cons": [f"Primary AI providers unavailable: {failure_reason}"],
+            "refactor_suggestions": [
+                "Configure at least one healthy AI provider key for richer analysis.",
+            ],
+        }
 
     @staticmethod
     def _persist_analysis(scan, analysis):

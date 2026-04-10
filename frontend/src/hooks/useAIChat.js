@@ -51,7 +51,7 @@ export const useAIChat = (scanId) => {
       setIsStreaming(false);
       setMessages((prev) => [
         ...prev,
-        { role: "system", text: payload?.msg || "Chat connection error" },
+        { role: "system", text: payload?.msg || "Chat connection error", done: true },
       ]);
     });
 
@@ -146,6 +146,7 @@ export const useAIChat = (scanId) => {
       status,
       isStreaming,
       scanCompleteEvent,
+      clearMessages: () => setMessages([]),
     }),
     [isStreaming, messages, scanCompleteEvent, sendMessage, status]
   );
