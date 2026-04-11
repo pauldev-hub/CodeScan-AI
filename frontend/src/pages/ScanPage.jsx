@@ -197,7 +197,7 @@ const ScanPage = () => {
                   </div>
                   <div className="codescan-editor-meta flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs text-text2">
                     <span>Language: {language}</span>
-                    <span>Characters: {code.length}</span>
+                    <span>Characters: {code.length} • long snippets are auto-chunked for analysis</span>
                   </div>
                 </div>
               ) : null}
