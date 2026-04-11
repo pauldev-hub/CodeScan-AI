@@ -21,6 +21,7 @@ class Scan(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     input_type = db.Column(db.String(20), nullable=False)
     input_value = db.Column(db.Text, nullable=True)
+    input_language = db.Column(db.String(40), nullable=True)
     status = db.Column(db.String(20), nullable=False, default="pending", index=True)
     health_score = db.Column(db.Integer, nullable=True)
     total_findings = db.Column(db.Integer, nullable=True)
@@ -36,6 +37,9 @@ class Scan(db.Model):
     pros_json = db.Column(db.Text, nullable=True)
     cons_json = db.Column(db.Text, nullable=True)
     refactor_suggestions_json = db.Column(db.Text, nullable=True)
+    queue_mode = db.Column(db.String(40), nullable=True)
+    ai_provider_used = db.Column(db.String(40), nullable=True)
+    learn_content_json = db.Column(db.Text, nullable=True)
 
     user = db.relationship("User", back_populates="scans")
     findings = db.relationship(
@@ -45,6 +49,7 @@ class Scan(db.Model):
         lazy="dynamic",
     )
     report = db.relationship("Report", back_populates="scan", uselist=False)
+    chat_conversations = db.relationship("ChatConversation", back_populates="scan", lazy="dynamic")
 
 
 class Finding(db.Model):
