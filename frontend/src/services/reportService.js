@@ -12,3 +12,8 @@ export const revokeShareLink = async (scanId) => {
   const response = await client.post(API_PATHS.revokeShare(scanId));
   return response.data;
 };
+
+export const generateShareCard = async (scanId) => {
+  const response = await client.post(API_PATHS.shareCard(scanId));
+  return response.data;
+};
