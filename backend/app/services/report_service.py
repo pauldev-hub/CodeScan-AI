@@ -57,5 +57,5 @@ class ReportService:
         report.last_viewed_at = ReportService._utc_now_naive()
         db.session.commit()
 
-        scan = Scan.query.get(report.scan_id)
+        scan = db.session.get(Scan, report.scan_id)
         return scan, None
