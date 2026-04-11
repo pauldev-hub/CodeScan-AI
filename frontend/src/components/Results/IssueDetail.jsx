@@ -31,6 +31,11 @@ const IssueDetail = ({ finding, beginnerMode }) => {
       </div>
 
       <p className="mt-2 text-sm text-text2">{description}</p>
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.12em] text-text3">
+        {finding.owasp_category ? <span className="rounded-full border border-border bg-bg2 px-2 py-1">{finding.owasp_category}</span> : null}
+        {finding.fix_effort ? <span className="rounded-full border border-border bg-bg2 px-2 py-1">{finding.fix_effort}</span> : null}
+        {finding.fix_time_minutes ? <span className="rounded-full border border-border bg-bg2 px-2 py-1">{finding.fix_time_minutes} min</span> : null}
+      </div>
       <div className="mt-3">
         <div className="mb-1 flex items-center justify-between text-xs text-text2">
           <span>{beginnerMode ? "Exploit ease" : "Exploit risk"}</span>
