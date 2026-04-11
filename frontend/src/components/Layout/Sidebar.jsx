@@ -1,4 +1,4 @@
-import { BarChart3, Home, ScanLine, Settings } from "lucide-react";
+import { BarChart3, Home, MessageSquare, ScanLine, Settings, Trophy } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
 import { useAuth } from "../../hooks/useAuth";
@@ -7,8 +7,9 @@ import { APP_ROUTES } from "../../utils/constants";
 const links = [
   { label: "Dashboard", to: APP_ROUTES.dashboard, icon: Home },
   { label: "New Scan", to: APP_ROUTES.scan, icon: ScanLine },
-  { label: "Results", to: APP_ROUTES.dashboard, icon: BarChart3 },
-  { label: "Settings", to: APP_ROUTES.dashboard, icon: Settings },
+  { label: "Activity", to: APP_ROUTES.activity, icon: BarChart3 },
+  { label: "DevChat", to: APP_ROUTES.chat, icon: MessageSquare },
+  { label: "Settings", to: APP_ROUTES.settings, icon: Settings },
 ];
 
 const SidebarNav = ({ linksToRender, onNavigate }) => (
@@ -59,6 +60,14 @@ const SidebarContent = ({ mobileOpen, onClose }) => {
           <p className="text-[10px] uppercase tracking-[0.22em] text-text3">Operator</p>
           <p className="mt-2 text-sm font-semibold text-text">{user?.username || "Secure reviewer"}</p>
           <p className="mt-1 text-xs text-text2">{user?.plan || "free"} plan</p>
+        </div>
+        <div className="mb-4 rounded-[20px] border border-border bg-[linear-gradient(135deg,rgba(214,161,108,0.18),rgba(255,255,255,0.02))] p-3 xl:p-4">
+          <div className="flex items-center gap-2 text-accent">
+            <Trophy size={14} />
+            <span className="text-[10px] uppercase tracking-[0.22em]">Momentum</span>
+          </div>
+          <p className="mt-3 text-sm font-semibold text-text">Keep your fix streak alive</p>
+          <p className="mt-1 text-xs text-text2">Dashboard now tracks progress, score trends, and guided next actions.</p>
         </div>
         <SidebarNav linksToRender={linksToRender} />
       </aside>
