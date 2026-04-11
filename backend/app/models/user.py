@@ -11,6 +11,9 @@ class User(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     username = db.Column(db.String(100), nullable=True)
+    name = db.Column(db.String(120), nullable=True)
+    age = db.Column(db.Integer, nullable=True)
+    about_me = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
         db.DateTime,
@@ -31,6 +34,7 @@ class User(db.Model):
         lazy="dynamic",
     )
     comments = db.relationship("Comment", back_populates="user", lazy="dynamic")
+    chat_conversations = db.relationship("ChatConversation", back_populates="user", lazy="dynamic")
 
     def set_password(self, password):
         self.password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
@@ -43,6 +47,9 @@ class User(db.Model):
             "id": self.id,
             "email": self.email,
             "username": self.username,
+            "name": self.name,
+            "age": self.age,
+            "about_me": self.about_me,
             "plan": self.plan,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
