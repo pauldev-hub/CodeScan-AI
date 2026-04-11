@@ -1,7 +1,7 @@
 from flask_jwt_extended import create_access_token
 import pytest
 
-from app import create_app, db
+from app import create_app, db, socketio
 from app.models.user import User
 
 
@@ -20,6 +20,21 @@ def app_instance():
 @pytest.fixture()
 def client(app_instance):
     return app_instance.test_client()
+
+
+@pytest.fixture()
+def socket_client(app_instance):
+    clients = []
+
+    def _socket_client(token):
+        client = socketio.test_client(app_instance, flask_test_client=app_instance.test_client(), auth={"token": token})
+        clients.append(client)
+        return client
+
+    yield _socket_client
+
+    for client in clients:
+        client.disconnect()
 
 
 @pytest.fixture()
