@@ -16,7 +16,7 @@ class AIProviderConfig:
     PROVIDERS = {
         "groq": {
             "name": "Groq",
-            "model": "groq-2-1b-tool-use-latest",
+            "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
             "max_tokens": 8192,
             "timeout": 30,
             "retry_count": 3,
@@ -24,7 +24,7 @@ class AIProviderConfig:
         },
         "gemini": {
             "name": "Google Gemini",
-            "model": "gemini-2.0-flash",
+            "model": os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
             "max_tokens": 8192,
             "timeout": 35,
             "retry_count": 2,
@@ -105,6 +105,16 @@ class AIProviderService:
             if self._is_provider_available(provider_name):
                 available.append(provider_name)
         return available
+
+    def provider_status(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            provider_name: {
+                "configured": self._is_provider_available(provider_name),
+                "model": AIProviderConfig.PROVIDERS[provider_name]["model"],
+                "name": AIProviderConfig.PROVIDERS[provider_name]["name"],
+            }
+            for provider_name in AIProviderConfig.PROVIDERS
+        }
 
     def _is_provider_available(self, provider_name: str) -> bool:
         """Check if a provider client is initialized and available for use."""
@@ -218,6 +228,46 @@ class AIProviderService:
         error_msg = "All AI providers failed. " + " | ".join(provider_errors[-3:])
         logger.error("[Scan %s] %s", scan_id, error_msg)
         raise AIAnalysisError(error_msg)
+
+    async def generate_text(
+        self,
+        user_prompt: str,
+        system_prompt: str,
+        preferred_order: Optional[List[str]] = None,
+    ) -> Tuple[str, str]:
+        if not user_prompt or not user_prompt.strip():
+            raise ValueError("user_prompt must be a non-empty string")
+        if not system_prompt or not system_prompt.strip():
+            raise ValueError("system_prompt must be a non-empty string")
+
+        order = preferred_order or self.provider_order
+        provider_errors = []
+        for provider_name in order:
+            if provider_name not in AIProviderConfig.PROVIDERS:
+                continue
+            if not self._is_provider_available(provider_name):
+                continue
+
+            config = AIProviderConfig.PROVIDERS[provider_name]
+            timeout = config["timeout"]
+            try:
+                if provider_name == "groq":
+                    text = await self._call_groq_text(user_prompt, system_prompt, timeout)
+                elif provider_name == "gemini":
+                    text = await self._call_gemini_text(user_prompt, system_prompt, timeout)
+                elif provider_name == "llama":
+                    text = await self._call_llama_text(user_prompt, system_prompt, timeout)
+                else:
+                    continue
+
+                if text and text.strip():
+                    return text.strip(), provider_name
+            except Exception as exc:
+                provider_errors.append(f"{provider_name}: {exc}")
+
+        if not provider_errors:
+            provider_errors.append("No configured text-capable providers are available")
+        raise AIAnalysisError(" | ".join(provider_errors))
 
     async def _call_provider_with_retry(
         self,
@@ -414,6 +464,62 @@ class AIProviderService:
             raise AIProviderResponseError("Llama returned empty response text")
 
         return self._parse_response(response_text)
+
+    async def _call_groq_text(self, user_prompt: str, system_prompt: str, timeout: int) -> str:
+        if not self.groq_client:
+            raise ValueError("Groq API key not configured")
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                self.groq_client.chat.completions.create,
+                model=AIProviderConfig.PROVIDERS["groq"]["model"],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.35,
+                max_tokens=AIProviderConfig.PROVIDERS["groq"]["max_tokens"],
+            ),
+            timeout=timeout,
+        )
+        try:
+            return response.choices[0].message.content or ""
+        except (AttributeError, IndexError, TypeError) as exc:
+            raise AIProviderResponseError(f"Groq returned unexpected text format: {exc}") from exc
+
+    async def _call_gemini_text(self, user_prompt: str, system_prompt: str, timeout: int) -> str:
+        if not self.genai_client:
+            raise ValueError("Gemini API key not configured")
+        model = self.genai_client.GenerativeModel(AIProviderConfig.PROVIDERS["gemini"]["model"])
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                model.generate_content,
+                f"{system_prompt}\n\n{user_prompt}",
+                generation_config={
+                    "temperature": 0.35,
+                    "max_output_tokens": AIProviderConfig.PROVIDERS["gemini"]["max_tokens"],
+                },
+            ),
+            timeout=timeout,
+        )
+        response_text = getattr(response, "text", None)
+        if not response_text:
+            raise AIProviderResponseError("Gemini returned empty response text")
+        return response_text
+
+    async def _call_llama_text(self, user_prompt: str, system_prompt: str, timeout: int) -> str:
+        if not self.hf_client:
+            raise ValueError("Hugging Face API key not configured")
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                self.hf_client.text_generation,
+                f"{system_prompt}\n\n{user_prompt}",
+                model=AIProviderConfig.PROVIDERS["llama"]["model"],
+                max_new_tokens=AIProviderConfig.PROVIDERS["llama"]["max_tokens"],
+                temperature=0.35,
+            ),
+            timeout=timeout,
+        )
+        return response if isinstance(response, str) else str(response)
 
     @staticmethod
     def _parse_response(response_text: str) -> Dict:
