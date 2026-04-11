@@ -28,7 +28,7 @@ export const joinScanRoom = (scanId) => {
   socket.emit(SOCKET_EVENTS.joinScanRoom, { scan_id: scanId });
 };
 
-export const sendChatMessage = (scanId, message, userId) => {
+export const sendChatMessage = (scanId, message, userId, history = []) => {
   if (!socket) {
     throw new Error("Socket not initialized");
   }
@@ -36,6 +36,7 @@ export const sendChatMessage = (scanId, message, userId) => {
     scan_id: scanId,
     message,
     user_id: userId,
+    history,
   });
 };
 
