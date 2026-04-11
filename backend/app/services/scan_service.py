@@ -7,8 +7,9 @@ import re
 import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from statistics import mean
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from app import db
 from app.models.scan import Finding, Scan
@@ -336,35 +337,49 @@ class ScanService:
     @staticmethod
     def build_fix_preview(scan, finding, override_suggestion=None):
         suggestion = (override_suggestion or finding.fix_suggestion or "").strip()
-        before = finding.code_snippet or ""
+        before = (finding.code_snippet or "").strip("\n")
         language = ScanService.normalize_language(scan.input_language)
-        comment_prefix = "#" if language in {"python", "yaml"} else "//"
-
-        intro = f"{comment_prefix} Suggested fix for: {finding.title}"
-        guidance = suggestion or "Apply the secure coding guidance for this finding."
-
-        if before:
-            after = (
-                f"{intro}\n"
-                f"{comment_prefix} {guidance}\n"
-                f"{comment_prefix} Review and adapt to your full file context before applying.\n"
-                f"{before}"
-            )
-        else:
-            after = (
-                f"{intro}\n"
-                f"{comment_prefix} {guidance}\n"
-                f"{comment_prefix} Original code snippet was not available in scan results."
-            )
+        preview_language = language if language != "text" else ScanService._guess_snippet_language(before)
+        change_summary, rationale, edit_hints = ScanService._build_fix_guidance(
+            {
+                "title": finding.title,
+                "description": finding.description,
+                "plain_english": finding.plain_english,
+                "severity": finding.severity,
+                "category": finding.category,
+                "fix_suggestion": finding.fix_suggestion,
+            },
+            preview_language,
+            suggestion,
+        )
+        after = ScanService._build_fixed_code(
+            before,
+            {
+                "title": finding.title,
+                "description": finding.description,
+                "plain_english": finding.plain_english,
+                "severity": finding.severity,
+                "category": finding.category,
+                "fix_suggestion": finding.fix_suggestion,
+            },
+            preview_language,
+            suggestion,
+            rationale,
+        )
+        diff_stats = ScanService._compute_diff_stats(before, after)
 
         return {
             "scan_id": scan.api_scan_id,
             "finding_id": finding.id,
             "before": before,
             "after": after,
-            "language": language,
-            "message": "Fix preview generated from scan finding metadata.",
-            "source": "scan_finding",
+            "language": preview_language,
+            "message": "Detailed fix preview generated from the finding details and captured snippet.",
+            "source": "generated_fix_preview",
+            "change_summary": change_summary,
+            "rationale": rationale,
+            "edit_hints": edit_hints,
+            "diff_stats": diff_stats,
         }
 
     @staticmethod
@@ -385,6 +400,7 @@ class ScanService:
                 "exploit_risk": finding.exploit_risk,
                 "cwe_id": finding.cwe_id,
                 "owasp_category": finding.owasp_category,
+                "code_snippet": finding.code_snippet,
             }
             for finding in scan.findings.order_by(Finding.id.asc()).all()
         ]
@@ -409,6 +425,9 @@ class ScanService:
             "code_size_bytes": scan.code_size_bytes,
             "queue_mode": scan.queue_mode,
             "provider_used": scan.ai_provider_used,
+            "created_at": scan.created_at.isoformat() if scan.created_at else None,
+            "started_at": scan.started_at.isoformat() if scan.started_at else None,
+            "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
             "findings": enriched,
             "summary": {
                 "total_findings": len(enriched),
@@ -567,6 +586,11 @@ class ScanService:
             item["teaching_focus"] = ScanService._lesson_focus(item)
             item["attack_prompt"] = f"Simulate how an attacker would exploit {item['title']}."
             item["input_language"] = input_language
+            item["explanation_card"] = ScanService._build_explanation_card(item)
+            item["attack_simulation"] = ScanService._build_attack_simulation(item)
+            item["code_roast"] = ScanService._build_code_roast(item)
+            item["hacker_challenge"] = ScanService._build_hacker_challenge(item)
+            item["live_simulator"] = ScanService._build_live_simulator(item)
             enriched.append(item)
 
         return sorted(
@@ -618,11 +642,6 @@ class ScanService:
             enriched["attack_example"] = f"An attacker abuses {item['title'].lower()} in {item['file_path']} to reach sensitive behavior."
             enriched["challenge_prompt"] = f"What is the first payload you would try against {item['title']}?"
             enriched["exploit_difficulty"] = max(5, 100 - int(item.get("exploit_risk") or 0))
-            enriched["live_simulator"] = {
-                "label": "Payload sandbox",
-                "placeholder": "<script>alert(1)</script>" if "xss" in item["title"].lower() else "' OR '1'='1",
-                "expected_result": "This demo shows how untrusted input can change runtime behavior.",
-            }
             security_findings.append(enriched)
 
         return {
@@ -795,6 +814,9 @@ class ScanService:
                 "quiz": parsed.get("quiz") or fallback["quiz"],
                 "fix_it_yourself": parsed.get("fix_it_yourself") or fallback["fix_it_yourself"],
                 "debate_starters": parsed.get("debate_starters") or fallback["debate_starters"],
+                "hacker_challenges": fallback["hacker_challenges"],
+                "code_roasts": fallback["code_roasts"],
+                "live_attack_labs": fallback["live_attack_labs"],
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "source": f"ai_generated:{provider_used}",
             }
@@ -845,8 +867,363 @@ class ScanService:
                 }
                 for item in top_items
             ],
+            "hacker_challenges": [
+                {
+                    "finding_id": item["id"],
+                    "title": item["title"],
+                    "prompt": item["hacker_challenge"]["prompt"],
+                    "hint": item["hacker_challenge"]["hint"],
+                    "expected_keywords": item["hacker_challenge"]["expected_keywords"],
+                    "solution": item["hacker_challenge"]["solution"],
+                }
+                for item in top_items
+            ],
+            "code_roasts": [
+                {
+                    "finding_id": item["id"],
+                    "title": item["title"],
+                    "gentle": item["code_roast"]["gentle"],
+                    "brutal": item["code_roast"]["brutal"],
+                    "teaching_point": item["code_roast"]["teaching_point"],
+                }
+                for item in top_items
+            ],
+            "live_attack_labs": [
+                {
+                    "finding_id": item["id"],
+                    "title": item["title"],
+                    "label": item["live_simulator"]["label"],
+                    "placeholder": item["live_simulator"]["placeholder"],
+                    "safe_default_payload": item["live_simulator"]["safe_default_payload"],
+                    "expected_result": item["live_simulator"]["expected_result"],
+                    "impact": item["live_simulator"]["impact"],
+                }
+                for item in top_items
+            ],
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": "seeded",
+        }
+
+    @staticmethod
+    def _comment_prefix(language: str) -> str:
+        return "#" if language in {"python", "yaml"} else "//"
+
+    @staticmethod
+    def _build_explanation_card(issue: Dict[str, object]) -> Dict[str, object]:
+        return {
+            "plain_english": issue.get("plain_english") or issue.get("description") or "This pattern makes the code easier to misuse.",
+            "why_it_matters": (
+                f"This issue is marked {issue.get('severity', 'medium')} because it can affect "
+                f"{'security boundaries' if issue.get('category') == 'security' else 'runtime correctness'}."
+            ),
+            "next_step": issue.get("fix_suggestion") or "Apply validation, safer APIs, and targeted tests.",
+        }
+
+    @staticmethod
+    def _build_attack_simulation(issue: Dict[str, object]) -> Dict[str, object]:
+        title = str(issue.get("title") or "").lower()
+        is_xss = "xss" in title or "script" in title
+        payload = "<script>alert(1)</script>" if is_xss else "' OR '1'='1"
+        return {
+            "payload": payload,
+            "entry_point": issue.get("file_path") or "snippet",
+            "steps": [
+                "Find the input that reaches the vulnerable code path.",
+                f"Send a crafted payload like {payload}.",
+                "Observe how the application changes behavior when that input is trusted.",
+            ],
+            "result": (
+                "The browser would execute attacker-controlled script."
+                if is_xss
+                else "The query logic can be altered so authorization or filtering is bypassed."
+            ),
+            "impact": issue.get("plain_english") or issue.get("description") or "Unsafe input handling can change program behavior.",
+        }
+
+    @staticmethod
+    def _build_code_roast(issue: Dict[str, object]) -> Dict[str, object]:
+        title = issue.get("title") or "This finding"
+        plain = issue.get("plain_english") or issue.get("description") or "The code trusts input too early."
+        return {
+            "gentle": f"{title} is a good reminder that convenience code still needs a safety rail.",
+            "brutal": f"{title} is basically the codebase hanging out a 'free bugs here' sign. {plain}",
+            "teaching_point": issue.get("fix_suggestion") or "Replace the unsafe pattern with a constrained API.",
+        }
+
+    @staticmethod
+    def _build_hacker_challenge(issue: Dict[str, object]) -> Dict[str, object]:
+        title = str(issue.get("title") or "").lower()
+        if any(keyword in title for keyword in ("sql", "injection", "parameterized", "select ", "query")):
+            return {
+                "prompt": "What short payload could bend the SQL query logic without crashing the app?",
+                "hint": "Think about quotes, boolean logic, and how string-built queries behave.",
+                "expected_keywords": ["'", "or", "1=1"],
+                "solution": "A classic example is `' OR '1'='1`, which can turn a restrictive WHERE clause into a permissive one.",
+            }
+        if "xss" in title:
+            return {
+                "prompt": "What payload would prove the page is rendering unsafe HTML or script?",
+                "hint": "Use a tiny harmless browser-visible script marker.",
+                "expected_keywords": ["<script", "alert"],
+                "solution": "A demo payload like `<script>alert(1)</script>` is enough to prove the browser would execute attacker input.",
+            }
+        return {
+            "prompt": f"What unsafe input would you try first against {issue.get('title', 'this code path')}?",
+            "hint": "Start with the smallest payload that changes control flow or output.",
+            "expected_keywords": ["input", "payload"],
+            "solution": issue.get("fix_suggestion") or "Look for an input that reaches a privileged operation without validation.",
+        }
+
+    @staticmethod
+    def _build_live_simulator(issue: Dict[str, object]) -> Dict[str, object]:
+        title = str(issue.get("title") or "").lower()
+        if "xss" in title:
+            return {
+                "label": "Browser payload sandbox",
+                "placeholder": "<script>alert(1)</script>",
+                "safe_default_payload": "<img src=x onerror=alert(1) />",
+                "expected_result": "Unsafe rendering would execute the payload in the browser context.",
+                "impact": "An attacker could steal sessions, deface content, or act as the user.",
+            }
+        return {
+            "label": "Query payload sandbox",
+            "placeholder": "' OR '1'='1",
+            "safe_default_payload": "' UNION SELECT 'admin','token' --",
+            "expected_result": "Unsafe query construction would treat attacker input as executable query logic.",
+            "impact": "An attacker could bypass filters, read data, or alter rows they should not control.",
+        }
+
+    @staticmethod
+    def _build_fix_guidance(issue: Dict[str, object], language: str, suggestion: str) -> Tuple[List[str], List[str], List[str]]:
+        del language
+        title = " ".join(
+            [
+                str(issue.get("title") or ""),
+                str(issue.get("description") or ""),
+                str(issue.get("plain_english") or ""),
+                str(issue.get("fix_suggestion") or ""),
+                suggestion or "",
+            ]
+        ).lower()
+        summary: List[str] = []
+        rationale: List[str] = []
+        edit_hints: List[str] = []
+
+        if "sql" in title or "injection" in title:
+            summary = [
+                "Stop building the query with string interpolation.",
+                "Move user-controlled data into query parameters.",
+                "Keep the SQL text static so the database treats the input as data, not syntax.",
+            ]
+            rationale = [
+                "Parameterized queries neutralize quote-breaking and boolean-bypass payloads.",
+                "Static query strings are easier to test and audit.",
+            ]
+            edit_hints = [
+                "Find the variable inserted into the query string and pass it separately to execute/query.",
+                "If multiple parameters exist, preserve their order in the placeholder tuple or array.",
+            ]
+        elif "credential" in title or "password" in title or "secret" in title:
+            summary = [
+                "Remove the secret from source control.",
+                "Load it from an environment variable or secret manager at runtime.",
+                "Fail fast with a clear error if the secret is missing.",
+            ]
+            rationale = [
+                "Secrets in source leak through git history, logs, and screenshots.",
+                "Runtime injection keeps rotation and environment separation practical.",
+            ]
+            edit_hints = [
+                "Choose an env var name that matches the purpose, such as APP_PASSWORD or API_TOKEN.",
+                "Add a short error message telling teammates where the secret should come from.",
+            ]
+        elif "dynamic code execution" in title or "eval" in title:
+            summary = [
+                "Replace dynamic code execution with parsing or a strict allowlist.",
+                "Treat incoming text as data, not executable instructions.",
+            ]
+            rationale = [
+                "eval/exec turns input handling into remote code execution risk.",
+            ]
+            edit_hints = [
+                "For Python literals, prefer ast.literal_eval over eval when the input format is limited.",
+                "For command-like features, map allowed tokens to explicit functions.",
+            ]
+        else:
+            summary = [
+                suggestion or "Apply the secure coding guidance for this finding.",
+                "Add a targeted regression test around the unsafe path.",
+            ]
+            rationale = [
+                "The fix should remove the risky behavior and lock it down with a test.",
+            ]
+            edit_hints = [
+                "Preserve surrounding behavior and change only the risky path first.",
+            ]
+
+        return summary, rationale, edit_hints
+
+    @staticmethod
+    def _build_fixed_code(before: str, issue: Dict[str, object], language: str, suggestion: str, rationale: List[str]) -> str:
+        if not before:
+            prefix = ScanService._comment_prefix(language)
+            lines = [f"{prefix} No original snippet was captured for this finding."]
+            lines.extend(f"{prefix} {item}" for item in rationale)
+            return "\n".join(lines)
+
+        title = " ".join(
+            [
+                str(issue.get("title") or ""),
+                str(issue.get("description") or ""),
+                str(issue.get("plain_english") or ""),
+                str(issue.get("fix_suggestion") or ""),
+                suggestion or "",
+                before,
+            ]
+        ).lower()
+        fixed = before
+
+        if any(keyword in title for keyword in ("sql", "injection", "parameterized", "select ", "query")) and language == "python":
+            fixed = ScanService._rewrite_python_sql_injection(before)
+        elif any(keyword in title for keyword in ("sql", "injection", "parameterized", "select ", "query")) and language in {"javascript", "typescript"}:
+            fixed = ScanService._rewrite_js_sql_injection(before)
+        elif any(keyword in title for keyword in ("credential", "password", "secret")):
+            fixed = ScanService._rewrite_hardcoded_secret(before, language)
+        elif "dynamic code execution" in title or "eval" in title:
+            fixed = ScanService._rewrite_dynamic_execution(before, language)
+        elif "exception" in title or "except" in before.lower():
+            fixed = ScanService._rewrite_broad_exception(before, language)
+
+        if fixed.strip() == before.strip():
+            prefix = ScanService._comment_prefix(language)
+            guidance = [f"{prefix} Fix intent: {suggestion or issue.get('fix_suggestion') or 'Apply safer validation and constrained APIs.'}"]
+            guidance.extend(f"{prefix} {item}" for item in rationale)
+            guidance.append(before)
+            fixed = "\n".join(guidance)
+
+        return fixed
+
+    @staticmethod
+    def _rewrite_python_sql_injection(before: str) -> str:
+        variable = ScanService._infer_interpolated_variable(before) or "user_input"
+        query_match = re.search(r"SELECT .*", before, flags=re.IGNORECASE)
+        query_text = query_match.group(0).strip() if query_match else "SELECT * FROM users WHERE id = %s"
+        query_text = re.sub(r"\{[^}]+\}", "%s", query_text)
+        query_text = query_text.replace("%s%s", "%s")
+        lines = []
+        for line in before.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("query ="):
+                indent = line[: len(line) - len(line.lstrip())]
+                lines.append(f'{indent}query = "{query_text}"')
+                continue
+            if ".execute(" in stripped:
+                indent = line[: len(line) - len(line.lstrip())]
+                target = stripped.split(".execute(", 1)[0] or "cursor"
+                lines.append(f"{indent}{target}.execute(query, ({variable},))")
+                continue
+            lines.append(line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _rewrite_js_sql_injection(before: str) -> str:
+        variable = ScanService._infer_interpolated_variable(before) or "userInput"
+        query_match = re.search(r"SELECT .*", before, flags=re.IGNORECASE)
+        query_text = query_match.group(0).strip() if query_match else "SELECT * FROM users WHERE id = ?"
+        query_text = re.sub(r"\$\{[^}]+\}", "?", query_text)
+        lines = []
+        for line in before.splitlines():
+            stripped = line.strip()
+            if "const query" in stripped or "let query" in stripped or stripped.startswith("query ="):
+                indent = line[: len(line) - len(line.lstrip())]
+                keyword = "const" if "const " in stripped else "let" if "let " in stripped else "const"
+                lines.append(f'{indent}{keyword} query = "{query_text}";')
+                continue
+            if ".query(" in stripped or ".execute(" in stripped:
+                indent = line[: len(line) - len(line.lstrip())]
+                if ".query(" in stripped:
+                    target = stripped.split(".query(", 1)[0] or "db"
+                    lines.append(f"{indent}{target}.query(query, [{variable}]);")
+                else:
+                    target = stripped.split(".execute(", 1)[0] or "db"
+                    lines.append(f"{indent}{target}.execute(query, [{variable}]);")
+                continue
+            lines.append(line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _rewrite_hardcoded_secret(before: str, language: str) -> str:
+        env_name = "APP_SECRET"
+        if "password" in before.lower():
+            env_name = "APP_PASSWORD"
+        replacement = f'os.getenv("{env_name}")' if language == "python" else f"process.env.{env_name}"
+        updated = re.sub(r"=\s*([\"']).+?\1", f" = {replacement}", before, count=1)
+        if language == "python" and "os.getenv" in updated and "import os" not in updated:
+            updated = f"import os\n{updated}"
+        return updated
+
+    @staticmethod
+    def _rewrite_dynamic_execution(before: str, language: str) -> str:
+        if language == "python":
+            updated = before.replace("eval(", "ast.literal_eval(")
+            if updated != before and "import ast" not in updated:
+                updated = f"import ast\n{updated}"
+            return updated
+        return before.replace("eval(", "safeEvaluate(")
+
+    @staticmethod
+    def _rewrite_broad_exception(before: str, language: str) -> str:
+        if language != "python":
+            return before
+        updated = re.sub(r"except\s*:\s*$", "except Exception as exc:", before, flags=re.MULTILINE)
+        if updated != before and "logger." not in updated:
+            updated = updated.replace(
+                "except Exception as exc:",
+                'except Exception as exc:\n    logger.exception("Unexpected failure during secure operation")\n    raise',
+                1,
+            )
+        return updated
+
+    @staticmethod
+    def _infer_interpolated_variable(before: str) -> Optional[str]:
+        match = re.search(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", before)
+        if match:
+            return match.group(1)
+        concat_match = re.search(r"\+\s*([A-Za-z_][A-Za-z0-9_]*)", before)
+        if concat_match:
+            return concat_match.group(1)
+        return None
+
+    @staticmethod
+    def _guess_snippet_language(before: str) -> str:
+        snippet = before or ""
+        if "cursor.execute" in snippet or "conn.cursor" in snippet or 'f"' in snippet:
+            return "python"
+        if "const " in snippet or "let " in snippet or "=>" in snippet:
+            return "javascript"
+        return "text"
+
+    @staticmethod
+    def _compute_diff_stats(before: str, after: str) -> Dict[str, int]:
+        before_lines = before.splitlines()
+        after_lines = after.splitlines()
+        matcher = SequenceMatcher(a=before_lines, b=after_lines)
+        added = 0
+        removed = 0
+        changed = 0
+        for opcode, a0, a1, b0, b1 in matcher.get_opcodes():
+            if opcode == "insert":
+                added += b1 - b0
+            elif opcode == "delete":
+                removed += a1 - a0
+            elif opcode == "replace":
+                changed += max(a1 - a0, b1 - b0)
+        return {
+            "before_lines": len(before_lines),
+            "after_lines": len(after_lines),
+            "added_lines": added,
+            "removed_lines": removed,
+            "changed_lines": changed,
         }
 
     @staticmethod
