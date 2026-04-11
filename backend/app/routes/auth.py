@@ -1,5 +1,6 @@
 from flask import Blueprint, request
 
+from app import db
 from app.models.user import User
 from app.services.auth_service import AuthService
 from app.utils.constants import (
@@ -93,7 +94,7 @@ def refresh():
 
     decoded = refreshed["decoded"]
 
-    user = User.query.get(int(decoded.get("sub")))
+    user = db.session.get(User, int(decoded.get("sub")))
     if not user or not user.is_active:
         return error_response("User not found", "not_found", 404)
 
