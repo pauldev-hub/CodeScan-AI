@@ -113,19 +113,49 @@ class ChatService:
 
     @staticmethod
     def build_local_fallback_reply(conversation: ChatConversation, message: str) -> str:
+        normalized = (message or "").strip()
+        lowered = normalized.lower()
         if conversation.scan:
             top_finding = (
                 conversation.scan.findings.order_by(Finding.exploit_risk.desc(), Finding.id.asc()).first()
             )
             if top_finding:
+                plain = top_finding.plain_english or top_finding.description or "This code path trusts input too early."
+                fix = top_finding.fix_suggestion or "Remove the unsafe pattern and add validation."
+                location = f"{top_finding.file_path}:{top_finding.line_number or 'n/a'}"
+
+                if any(keyword in lowered for keyword in ("simulate", "attack", "exploit")):
+                    payload = "<script>alert(1)</script>" if "xss" in top_finding.title.lower() else "' OR '1'='1"
+                    return (
+                        "Local assistant reply:\n\n"
+                        f"Target finding: {top_finding.title} at {location}\n"
+                        f"Plain English: {plain}\n\n"
+                        "Attack walk-through:\n"
+                        f"1. Reach the vulnerable input that flows into {location}.\n"
+                        f"2. Send a payload such as {payload}.\n"
+                        "3. Observe whether the app changes query logic, rendering, or authorization behavior.\n\n"
+                        f"Safest fix direction: {fix}"
+                    )
+
+                if any(keyword in lowered for keyword in ("fix", "patch", "remed", "secure")):
+                    return (
+                        "Local assistant reply:\n\n"
+                        f"Highest-value fix: {top_finding.title} at {location}\n"
+                        "Recommended path:\n"
+                        f"1. {fix}\n"
+                        "2. Add a regression test that proves attacker-controlled input no longer changes behavior.\n"
+                        "3. Re-scan the snippet and confirm the finding disappears.\n\n"
+                        f"Why this first: {plain}"
+                    )
+
                 return (
-                    f"Plain English: The highest-risk issue in this scan is '{top_finding.title}'. "
-                    f"It matters because {top_finding.plain_english or top_finding.description}\n\n"
-                    f"Technical note: Look at {top_finding.file_path}:{top_finding.line_number or 'n/a'} and apply this fix direction: "
-                    f"{top_finding.fix_suggestion or 'Remove the unsafe pattern and add validation.'}\n\n"
-                    f"Your question was: {message}"
+                    "Local assistant reply:\n\n"
+                    f"Plain English: The highest-risk issue in this scan is '{top_finding.title}'. It matters because {plain}\n\n"
+                    f"Technical note: Look at {location} and apply this fix direction: {fix}\n\n"
+                    f"Question received: {normalized}"
                 )
         return (
-            "I could not reach the primary AI providers, so I am replying with a local fallback.\n\n"
-            "Ask about a specific vulnerability, bug, or code snippet and I will explain the likely risk and the safest next step."
+            "Local assistant reply:\n\n"
+            "The external AI providers were unavailable, so I switched to a built-in assistant mode.\n"
+            "Share a specific vulnerability, bug, or code snippet and I will still explain the risk, simulate the attack path, and suggest the safest next fix."
         )
