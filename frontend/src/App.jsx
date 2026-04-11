@@ -6,16 +6,20 @@ import PageTransition from "./components/Common/PageTransition";
 import SplashScreen from "./components/Common/SplashScreen";
 import Navbar from "./components/Layout/Navbar";
 import Sidebar from "./components/Layout/Sidebar";
+import ActivityPage from "./pages/ActivityPage";
 import AdminDashboardPage from "./pages/admin/AdminDashboardPage";
 import AdminIncidentsPage from "./pages/admin/AdminIncidentsPage";
 import AdminQueuePage from "./pages/admin/AdminQueuePage";
 import DashboardPage from "./pages/DashboardPage";
+import DevChatPage from "./pages/DevChatPage";
 import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import ResultsPage from "./pages/ResultsPage";
 import ScanPage from "./pages/ScanPage";
+import SettingsPage from "./pages/SettingsPage";
 import SharedReportPage from "./pages/SharedReportPage";
+import SharedSummaryPage from "./pages/SharedSummaryPage";
 import SignupPage from "./pages/SignupPage";
 import AdminRoute from "./routes/AdminRoute";
 import ProtectedRoute from "./routes/ProtectedRoute";
@@ -56,6 +60,7 @@ const App = () => {
   return (
     <ErrorBoundary>
       {showSplash ? <SplashScreen onDone={() => setShowSplash(false)} /> : null}
+      {showSplash ? null : (
       <Routes>
       <Route
         path={APP_ROUTES.landing}
@@ -100,11 +105,33 @@ const App = () => {
       />
 
       <Route
+        path={APP_ROUTES.activity}
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <ActivityPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
         path={APP_ROUTES.scan}
         element={
           <ProtectedRoute>
             <ProtectedLayout>
               <ScanPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.chat}
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <DevChatPage />
             </ProtectedLayout>
           </ProtectedRoute>
         }
@@ -127,6 +154,26 @@ const App = () => {
           <PublicLayout>
             <SharedReportPage />
           </PublicLayout>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.sharedSummary}
+        element={
+          <PublicLayout>
+            <SharedSummaryPage />
+          </PublicLayout>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.settings}
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <SettingsPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
         }
       />
 
@@ -172,6 +219,7 @@ const App = () => {
         }
       />
       </Routes>
+      )}
     </ErrorBoundary>
   );
 };
