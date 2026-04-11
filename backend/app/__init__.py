@@ -8,6 +8,7 @@ from flask_jwt_extended import JWTManager
 from flask_migrate import Migrate
 from flask_socketio import SocketIO
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.exc import OperationalError
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
@@ -72,6 +73,23 @@ def celery_init_app(app):
 
 
 def register_error_handlers(app):
+    @app.errorhandler(OperationalError)
+    def database_operational_error(error):
+        message = str(getattr(error, "orig", error) or "").lower()
+        if "no such column" in message or "no such table" in message:
+            app.logger.exception("Database schema mismatch detected")
+            return (
+                jsonify(
+                    {
+                        "error": "Database migration required",
+                        "status": "migration_required",
+                        "message": "The database schema is behind the current app version. Run the latest migrations and retry.",
+                    }
+                ),
+                500,
+            )
+        raise error
+
     @app.errorhandler(404)
     def not_found(error):
         del error
@@ -97,7 +115,36 @@ def register_routes(app):
 
     @app.get("/health")
     def ready_check():
-        return jsonify({"status": "ok"}), 200
+        from app.services.ai_provider import get_ai_provider_service
+        from app.utils.security import get_redis_client
+
+        redis_client = get_redis_client()
+        redis_ok = False
+        if redis_client:
+            try:
+                redis_ok = bool(redis_client.ping())
+            except Exception:
+                redis_ok = False
+
+        provider_service = get_ai_provider_service()
+        provider_status = provider_service.provider_status()
+        queue_mode = "celery" if redis_ok else "inline_background"
+        return (
+            jsonify(
+                {
+                    "status": "ok",
+                    "redis": {"configured": redis_client is not None, "healthy": redis_ok},
+                    "celery": {
+                        "broker_url": app.config.get("CELERY_BROKER_URL"),
+                        "result_backend": app.config.get("CELERY_RESULT_BACKEND"),
+                        "worker_pool": app.config.get("CELERY_WORKER_POOL"),
+                        "queue_mode": queue_mode,
+                    },
+                    "ai_providers": provider_status,
+                }
+            ),
+            200,
+        )
 
     for blueprint in ALL_BLUEPRINTS:
         app.register_blueprint(blueprint)
@@ -128,9 +175,9 @@ def create_app(config_name=None):
 
     # Import models so SQLAlchemy metadata is available for migrations.
     with app.app_context():
-        from app.models import report, scan, user
+        from app.models import chat, report, scan, user
         from app.tasks import scan_tasks
 
-        del report, scan, user, scan_tasks
+        del chat, report, scan, user, scan_tasks
 
     return app
