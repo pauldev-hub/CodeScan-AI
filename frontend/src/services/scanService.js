@@ -51,11 +51,21 @@ export const getScanResults = async (scanId, signal) => {
   return response.data;
 };
 
+export const regenerateLearnContent = async (scanId) => {
+  const response = await client.post(API_PATHS.regenerateLearn(scanId));
+  return response.data;
+};
+
 export const getScanHistory = async (page = 1, perPage = 10, signal) => {
   const response = await client.get(API_PATHS.scanHistory, {
     params: { page, per_page: perPage },
     signal,
     timeout: SCAN_READ_TIMEOUT_MS,
   });
+  return response.data;
+};
+
+export const deleteScan = async (scanId) => {
+  const response = await client.delete(API_PATHS.scanStatus(scanId).replace("/status", ""));
   return response.data;
 };
