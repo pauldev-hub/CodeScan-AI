@@ -4,55 +4,31 @@ import { THEME_STORAGE_KEY } from "../utils/constants";
 
 const ThemeContext = createContext(null);
 
-const getInitialTheme = () => {
-  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-  if (savedTheme === "light" || savedTheme === "dark") {
-    return savedTheme;
-  }
-  return "dark";
-};
-
-const hasManualThemeChoice = () => {
-  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-  return savedTheme === "light" || savedTheme === "dark";
-};
+const getInitialTheme = () => "dark";
+const hasManualThemeChoice = () => true;
 
 export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState(getInitialTheme);
   const [manualChoice, setManualChoice] = useState(hasManualThemeChoice);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    if (manualChoice) {
-      localStorage.setItem(THEME_STORAGE_KEY, theme);
-    } else {
-      localStorage.removeItem(THEME_STORAGE_KEY);
-    }
+    document.documentElement.setAttribute("data-theme", "dark");
+    localStorage.setItem(THEME_STORAGE_KEY, "dark");
   }, [manualChoice, theme]);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (event) => {
-      if (!manualChoice) {
-        setTheme(event.matches ? "dark" : "light");
-      }
-    };
-
-    mediaQuery.addEventListener("change", onChange);
-    return () => mediaQuery.removeEventListener("change", onChange);
+    setTheme("dark");
+    return undefined;
   }, [manualChoice]);
 
   const toggleTheme = useCallback(() => {
     setManualChoice(true);
-    setTheme((current) => (current === "dark" ? "light" : "dark"));
+    setTheme("dark");
   }, []);
 
-  const setThemePreference = useCallback((nextTheme) => {
-    if (nextTheme !== "light" && nextTheme !== "dark") {
-      return;
-    }
+  const setThemePreference = useCallback((_nextTheme) => {
     setManualChoice(true);
-    setTheme(nextTheme);
+    setTheme("dark");
   }, []);
 
   const value = useMemo(
