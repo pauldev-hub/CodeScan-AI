@@ -15,6 +15,12 @@ def _env_bool(name, default=False):
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_list(name, default):
+    value = os.getenv(name)
+    raw = value if value is not None else default
+    return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
 class BaseConfig:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///codescan.db")
@@ -26,7 +32,10 @@ class BaseConfig:
 
     BCRYPT_LOG_ROUNDS = int(os.getenv("BCRYPT_LOG_ROUNDS", "12"))
 
-    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173")
+    CORS_ORIGINS = _env_list(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+    )
 
     REDIS_URL = os.getenv("REDIS_URL")
     CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL or "redis://localhost:6379/0")
