@@ -1,146 +1,187 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  createSocket,
-  disconnectSocket,
-  getSocket,
-  joinScanRoom,
-  onSocketEvent,
-  sendChatMessage,
-} from "../services/chatService";
-import { acquireLock, releaseLock } from "../utils/storage";
+  createChatSocket,
+  createConversation,
+  disconnectChatSocket,
+  getConversation,
+  onChatSocketEvent,
+  sendConversationMessage,
+  startChatSession,
+} from "../services/devChatService";
 import { SOCKET_EVENTS } from "../utils/constants";
 import { useAuth } from "./useAuth";
 
-export const useAIChat = (scanId) => {
-  const { accessToken, user } = useAuth();
-  const [messages, setMessages] = useState([]);
+export const useAIChat = ({ scanId = null, conversationId = null, autoCreate = false } = {}) => {
+  const { accessToken } = useAuth();
   const [status, setStatus] = useState("idle");
+  const [activeConversationId, setActiveConversationId] = useState(conversationId);
+  const [messages, setMessages] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [scanCompleteEvent, setScanCompleteEvent] = useState(null);
-  const [lastOutgoing, setLastOutgoing] = useState({ text: "", at: 0 });
+  const activeConversationIdRef = useRef(conversationId);
 
   useEffect(() => {
-    if (!accessToken || !scanId) {
-      return;
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    if (conversationId) {
+      setActiveConversationId(conversationId);
+    }
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      return undefined;
     }
 
-    const socket = createSocket(accessToken);
+    createChatSocket(accessToken);
     setStatus("connecting");
 
-    const cleanupConnect = onSocketEvent("connect", () => {
-      setStatus("connected");
-      joinScanRoom(scanId);
-    });
-
-    const cleanupDisconnect = onSocketEvent("disconnect", () => {
-      setStatus("disconnected");
-      setIsStreaming(false);
-    });
-
-    const cleanupReconnect = onSocketEvent("reconnect_attempt", () => {
-      setStatus("reconnecting");
-    });
-
-    const cleanupReconnectOk = onSocketEvent("reconnect", () => {
-      setStatus("connected");
-      joinScanRoom(scanId);
-    });
-
-    const cleanupError = onSocketEvent(SOCKET_EVENTS.error, (payload) => {
-      setIsStreaming(false);
-      setMessages((prev) => [
-        ...prev,
-        { role: "system", text: payload?.msg || "Chat connection error", done: true },
-      ]);
-    });
-
-    const cleanupResponse = onSocketEvent(SOCKET_EVENTS.chatResponse, (payload) => {
-      setIsStreaming(!payload?.is_final);
-      setMessages((prev) => {
-        if (!prev.length || prev[prev.length - 1].role !== "assistant" || prev[prev.length - 1].done) {
-          return [
-            ...prev,
-            {
-              role: "assistant",
-              text: payload.chunk || "",
-              done: Boolean(payload.is_final),
-              provider: payload.provider_used,
-            },
-          ];
+    const cleanups = [
+      onChatSocketEvent("connect", () => {
+        setStatus("connected");
+        if (activeConversationIdRef.current || scanId) {
+          startChatSession({ conversationId: activeConversationIdRef.current, scanId });
         }
-
-        const next = [...prev];
-        const last = next[next.length - 1];
-        next[next.length - 1] = {
-          ...last,
-          text: `${last.text}${payload.chunk || ""}`,
-          done: Boolean(payload.is_final),
-          provider: payload.provider_used || last.provider,
-        };
-        return next;
-      });
-    });
-
-    const cleanupScanComplete = onSocketEvent(SOCKET_EVENTS.scanComplete, (payload) => {
-      if (!payload?.scan_id || payload.scan_id !== scanId) {
-        return;
-      }
-      setScanCompleteEvent(payload);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "system",
-          text: `Scan complete. Health score: ${payload.health_score ?? "n/a"}.`,
-          done: true,
-        },
-      ]);
-    });
+      }),
+      onChatSocketEvent("disconnect", () => {
+        setStatus("disconnected");
+        setIsStreaming(false);
+      }),
+      onChatSocketEvent("reconnect_attempt", () => setStatus("reconnecting")),
+      onChatSocketEvent(SOCKET_EVENTS.error, (payload) => {
+        setMessages((prev) => [...prev, { id: `error-${prev.length}`, role: "system", content: payload?.msg || "Chat connection error" }]);
+      }),
+      onChatSocketEvent("chat_error", (payload) => {
+        setIsStreaming(false);
+        setMessages((prev) => [...prev, { id: `chat-error-${prev.length}`, role: "system", content: payload?.error || "Unable to send chat message" }]);
+      }),
+      onChatSocketEvent("chat_message_saved", (payload) => {
+        if (payload?.conversation_id) {
+          setActiveConversationId((current) => current || payload.conversation_id);
+        }
+      }),
+      onChatSocketEvent(SOCKET_EVENTS.chatResponseChunk, (payload) => {
+        setActiveConversationId((current) => current || payload?.conversation_id);
+        setIsStreaming(true);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant" && last?.streaming) {
+            const next = [...prev];
+            next[next.length - 1] = { ...last, content: `${last.content}${payload?.chunk || ""}` };
+            return next;
+          }
+          return [...prev, { id: `assistant-stream-${Date.now()}`, role: "assistant", content: payload?.chunk || "", streaming: true }];
+        });
+      }),
+      onChatSocketEvent(SOCKET_EVENTS.chatResponseDone, (payload) => {
+        setIsStreaming(false);
+        setActiveConversationId((current) => current || payload?.conversation_id);
+        setMessages((prev) => {
+          if (!prev.length) {
+            return [{ id: payload?.message_id || `assistant-${Date.now()}`, role: "assistant", content: payload?.full_content || "" }];
+          }
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === "assistant" && last?.streaming) {
+            next[next.length - 1] = {
+              id: payload?.message_id || last.id,
+              role: "assistant",
+              content: payload?.full_content || last.content,
+              provider: payload?.provider_used,
+            };
+            return next;
+          }
+          return [...next, { id: payload?.message_id || `assistant-${Date.now()}`, role: "assistant", content: payload?.full_content || "", provider: payload?.provider_used }];
+        });
+      }),
+      onChatSocketEvent(SOCKET_EVENTS.scanComplete, (payload) => {
+        if (!payload?.scan_id || (scanId && payload.scan_id !== scanId)) {
+          return;
+        }
+        setScanCompleteEvent(payload);
+      }),
+      onChatSocketEvent(SOCKET_EVENTS.roomJoined, (payload) => {
+        if (payload?.conversation_id) {
+          setActiveConversationId(payload.conversation_id);
+        }
+      }),
+    ];
 
     return () => {
-      cleanupConnect();
-      cleanupDisconnect();
-      cleanupReconnect();
-      cleanupReconnectOk();
-      cleanupError();
-      cleanupResponse();
-      cleanupScanComplete();
-      socket.disconnect();
-      disconnectSocket();
+      cleanups.forEach((cleanup) => cleanup?.());
+      disconnectChatSocket();
     };
   }, [accessToken, scanId]);
 
-  const sendMessage = useCallback((text) => {
-    const normalized = (text || "").trim();
-    if (!scanId || !normalized || !getSocket()) {
-      return;
-    }
+  useEffect(() => {
+    let cancelled = false;
+    const ensureConversation = async () => {
+      if (!autoCreate || activeConversationId || !scanId) {
+        return;
+      }
+      const created = await createConversation({ title: "Scan Chat", scanId });
+      if (!cancelled) {
+        setActiveConversationId(created.id);
+        startChatSession({ conversationId: created.id, scanId });
+      }
+    };
+    ensureConversation();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId, autoCreate, scanId]);
 
-    const now = Date.now();
-    if (isStreaming) {
-      return;
-    }
-    if (lastOutgoing.text === normalized && now - lastOutgoing.at < 1000) {
-      return;
-    }
+  useEffect(() => {
+    let cancelled = false;
+    const loadConversation = async () => {
+      if (!activeConversationId) {
+        setMessages([]);
+        return;
+      }
+      const payload = await getConversation(activeConversationId);
+      if (!cancelled) {
+        setMessages(payload.messages || []);
+        startChatSession({ conversationId: activeConversationId, scanId });
+      }
+    };
+    loadConversation();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId, scanId]);
 
-    const lockKey = `codescan:chat-lock:${scanId}`;
-    if (!acquireLock(lockKey, 1500)) {
-      return;
-    }
+  const sendMessage = useCallback(
+    async (text) => {
+      const normalized = (text || "").trim();
+      if (!normalized || isStreaming) {
+        return;
+      }
 
-    setLastOutgoing({ text: normalized, at: now });
-    setMessages((prev) => [...prev, { role: "user", text: normalized }]);
-    setIsStreaming(true);
-    try {
-      sendChatMessage(scanId, normalized, user?.id);
-    } finally {
-      releaseLock(lockKey);
-    }
-  }, [isStreaming, lastOutgoing.at, lastOutgoing.text, scanId, user?.id]);
+      let nextConversationId = activeConversationIdRef.current;
+      if (!nextConversationId && autoCreate) {
+        const created = await createConversation({ title: normalized.slice(0, 80), scanId });
+        nextConversationId = created.id;
+        setActiveConversationId(created.id);
+        startChatSession({ conversationId: created.id, scanId });
+      }
+      if (!nextConversationId) {
+        return;
+      }
+
+      setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: "user", content: normalized }]);
+      setIsStreaming(true);
+      sendConversationMessage({ conversationId: nextConversationId, scanId, message: normalized });
+    },
+    [autoCreate, isStreaming, scanId]
+  );
 
   return useMemo(
     () => ({
+      activeConversationId,
+      setActiveConversationId,
       messages,
       sendMessage,
       status,
@@ -148,6 +189,6 @@ export const useAIChat = (scanId) => {
       scanCompleteEvent,
       clearMessages: () => setMessages([]),
     }),
-    [isStreaming, messages, scanCompleteEvent, sendMessage, status]
+    [activeConversationId, isStreaming, messages, scanCompleteEvent, sendMessage, status]
   );
 };
