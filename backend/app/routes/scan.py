@@ -67,6 +67,7 @@ def _enqueue_scan(scan):
     try:
         task = process_scan_task.delay(scan.id)
         scan.celery_task_id = task.id
+        scan.queue_mode = "celery"
         _start_pending_scan_watchdog(scan.id)
         return True, "celery"
     except Exception as exc:
@@ -83,6 +84,7 @@ def _enqueue_scan(scan):
             if current_app.config.get("TESTING", False):
                 task = process_scan_task.apply(args=[scan.id], throw=True)
                 scan.celery_task_id = task.id
+                scan.queue_mode = "inline_fallback"
                 return True, "inline_fallback"
 
             flask_app = current_app._get_current_object()
@@ -107,6 +109,7 @@ def _enqueue_scan(scan):
             worker.start()
 
             scan.celery_task_id = fallback_task_id
+            scan.queue_mode = "inline_background"
             return True, "inline_background"
         except Exception as fallback_exc:
             current_app.logger.exception(
@@ -174,8 +177,14 @@ def submit_paste_scan():
     if len(code) > MAX_PASTE_CODE_CHARS:
         return error_response("Code too long", "validation_error", 400)
 
-    input_value = f"// language: {language}\n{code}"
-    scan = ScanService.create_scan(user_id, "paste", input_value, file_count=1, code_size_bytes=len(code.encode("utf-8")))
+    scan = ScanService.create_scan(
+        user_id,
+        "paste",
+        code,
+        file_count=1,
+        code_size_bytes=len(code.encode("utf-8")),
+        input_language=language,
+    )
     enqueued, queue_mode = _enqueue_scan(scan)
     if not enqueued:
         ScanService.mark_scan_enqueue_failed(scan, "Scan worker is unavailable. Please retry.")
@@ -270,6 +279,8 @@ def scan_history():
             "health_score": scan.health_score,
             "total_findings": scan.total_findings,
             "input_type": scan.input_type,
+            "queue_mode": scan.queue_mode,
+            "provider_used": scan.ai_provider_used,
             "created_at": scan.created_at.isoformat() if scan.created_at else None,
             "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
         }
@@ -307,6 +318,18 @@ def scan_results(scan_id):
     if scan.status != SCAN_STATUS_COMPLETE:
         return error_response("Results not ready", "not_found", 404)
     return success_response(ScanService.build_results_payload(scan))
+
+
+@scan_bp.post("/<scan_id>/learn/regenerate")
+@jwt_required()
+def regenerate_learn(scan_id):
+    user_id = int(get_jwt_identity())
+    scan = ScanService.get_scan_by_api_id(user_id, scan_id)
+    if not scan:
+        return error_response("Scan not found", "not_found", 404)
+    if scan.status != SCAN_STATUS_COMPLETE:
+        return error_response("Results not ready", "not_found", 404)
+    return success_response(ScanService.regenerate_learn_content(scan))
 
 
 @scan_bp.post("/<scan_id>/fix-preview")
