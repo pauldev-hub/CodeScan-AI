@@ -1,12 +1,18 @@
-import { Menu, ShieldCheck } from "lucide-react";
-import { Link } from "react-router-dom";
+import { LogOut, Menu, Settings, ShieldCheck, Sparkles } from "lucide-react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../hooks/useAuth";
 import { APP_ROUTES } from "../../utils/constants";
 import ThemeToggle from "./ThemeToggle";
 
 const Navbar = ({ showMenuButton = false, onMenuToggle }) => {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, signOut } = useAuth();
+  const navigate = useNavigate();
+
+  const onLogout = async () => {
+    await signOut();
+    navigate(APP_ROUTES.landing, { replace: true });
+  };
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-[color:var(--panel)] backdrop-blur-xl">
@@ -35,10 +41,60 @@ const Navbar = ({ showMenuButton = false, onMenuToggle }) => {
         </div>
 
         <div className="flex items-center gap-3">
+          <nav className="hidden items-center gap-2 lg:flex">
+            {isAuthenticated ? (
+              <>
+                <NavLink to={APP_ROUTES.dashboard} className="rounded-full px-3 py-2 text-sm text-text2 transition-colors hover:bg-bg3 hover:text-text">
+                  Dashboard
+                </NavLink>
+                <NavLink to={APP_ROUTES.scan} className="rounded-full px-3 py-2 text-sm text-text2 transition-colors hover:bg-bg3 hover:text-text">
+                  Scan
+                </NavLink>
+                <NavLink to={APP_ROUTES.activity} className="rounded-full px-3 py-2 text-sm text-text2 transition-colors hover:bg-bg3 hover:text-text">
+                  Activity
+                </NavLink>
+                <NavLink to={APP_ROUTES.chat} className="rounded-full px-3 py-2 text-sm text-text2 transition-colors hover:bg-bg3 hover:text-text">
+                  DevChat
+                </NavLink>
+                <NavLink to={APP_ROUTES.settings} className="rounded-full px-3 py-2 text-sm text-text2 transition-colors hover:bg-bg3 hover:text-text">
+                  Settings
+                </NavLink>
+              </>
+            ) : (
+              <>
+                <NavLink to={APP_ROUTES.login} className="rounded-full px-3 py-2 text-sm text-text2 transition-colors hover:bg-bg3 hover:text-text">
+                  Login
+                </NavLink>
+                <NavLink to={APP_ROUTES.signup} className="inline-flex items-center gap-2 rounded-full border border-border bg-bg3 px-3 py-2 text-sm text-text transition-colors hover:border-[color:var(--border-strong)]">
+                  <Sparkles size={14} className="text-accent" />
+                  Create account
+                </NavLink>
+              </>
+            )}
+          </nav>
           <ThemeToggle />
           <span className="rounded-full border border-border bg-bg3 px-3 py-1.5 text-xs text-text2">
             {isAuthenticated ? user?.email || "Signed In" : "Guest"}
           </span>
+          {isAuthenticated ? (
+            <>
+              <Link
+                to={APP_ROUTES.settings}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-bg3 text-text"
+                aria-label="Settings"
+              >
+                <Settings size={14} />
+              </Link>
+              <button
+                type="button"
+                onClick={onLogout}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-bg3 text-text"
+                aria-label="Logout"
+              >
+                <LogOut size={14} />
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
     </header>
