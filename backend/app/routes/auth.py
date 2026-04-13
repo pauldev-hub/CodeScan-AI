@@ -80,6 +80,26 @@ def login():
     )
 
 
+@auth_bp.post("/guest")
+def guest_login():
+    if not enforce_rate_limit(
+        f"auth:guest:{request.remote_addr}",
+        RATE_LIMIT_AUTH_MAX_REQUESTS,
+        RATE_LIMIT_AUTH_WINDOW_SECONDS,
+    ):
+        return error_response("Too many requests", "rate_limited", 429)
+
+    data = AuthService.login_guest_user()
+
+    return success_response(
+        {
+            "user": AuthService.user_payload(data["user"]),
+            "access_token": data["access_token"],
+            "refresh_token": data["refresh_token"],
+        }
+    )
+
+
 @auth_bp.post("/refresh")
 def refresh():
     payload = request.get_json(silent=True) or {}

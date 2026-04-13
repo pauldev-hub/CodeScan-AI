@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import secrets
 
 from flask_jwt_extended import create_access_token, create_refresh_token, decode_token
 
@@ -47,6 +48,28 @@ class AuthService:
             "access_token": access_token,
             "refresh_token": refresh_token,
         }, None
+
+    @staticmethod
+    def login_guest_user():
+        guest_email = "guest@codescan.local"
+        guest_user = User.query.filter_by(email=guest_email).first()
+
+        if not guest_user:
+            guest_user = User(email=guest_email, username="Guest", plan="free")
+            guest_user.set_password(secrets.token_urlsafe(24))
+            db.session.add(guest_user)
+
+        guest_user.last_login_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        access_token = create_access_token(identity=str(guest_user.id))
+        refresh_token = create_refresh_token(identity=str(guest_user.id))
+
+        return {
+            "user": guest_user,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+        }
 
     @staticmethod
     def refresh_tokens(refresh_token):
