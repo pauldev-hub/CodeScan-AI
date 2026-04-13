@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Optional
 
 from flask import request, session
@@ -8,6 +9,9 @@ from flask_socketio import disconnect, emit, join_room
 from app.models.scan import Scan
 from app.services.chat_service import ChatService
 from app.utils.security import get_session_revoke_marker
+
+
+logger = logging.getLogger(__name__)
 
 
 class ChatSessionGuard:
@@ -131,6 +135,30 @@ def register_socket_handlers(socketio):
             room=room_name,
         )
 
+        local_tool_reply = ChatService.try_local_tool_response(conversation, message)
+        if local_tool_reply:
+            provider_used = "local_tool"
+            text = ChatService.normalize_assistant_reply(local_tool_reply)
+            assistant_message = ChatService.add_message(conversation, "assistant", text)
+            chunks = _chunk_text(text)
+            for chunk in chunks:
+                emit(
+                    "chat_response_chunk",
+                    {"conversation_id": conversation.id, "chunk": chunk, "provider_used": provider_used},
+                    room=room_name,
+                )
+            emit(
+                "chat_response_done",
+                {
+                    "conversation_id": conversation.id,
+                    "message_id": assistant_message.id,
+                    "full_content": text,
+                    "provider_used": provider_used,
+                },
+                room=room_name,
+            )
+            return
+
         try:
             system_prompt, user_prompt = ChatService.build_chat_prompt(conversation, message)
             from app.services.ai_provider import get_ai_provider_service
@@ -139,12 +167,23 @@ def register_socket_handlers(socketio):
                 get_ai_provider_service().generate_text(
                     user_prompt=user_prompt,
                     system_prompt=system_prompt,
-                    preferred_order=["groq", "gemini"],
+                    preferred_order=["gemini", "groq", "cerebras", "llama"],
                 )
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Chat provider fallback activated. conversation_id=%s error=%s",
+                conversation.id,
+                exc,
+            )
             provider_used = "local_fallback"
             text = ChatService.build_local_fallback_reply(conversation, message)
+
+        text = ChatService.normalize_assistant_reply(text)
+        if not text.strip():
+            provider_used = "local_fallback"
+            text = ChatService.build_local_fallback_reply(conversation, message)
+            text = ChatService.normalize_assistant_reply(text)
 
         assistant_message = ChatService.add_message(conversation, "assistant", text)
         chunks = _chunk_text(text)
