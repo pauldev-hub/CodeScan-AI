@@ -26,7 +26,7 @@ client.interceptors.request.use((config) => {
 const mapApiError = (error) => {
   const status = error?.response?.status;
   const payload = error?.response?.data || {};
-  const message = payload.error || error.message || "Unexpected request failure";
+  const message = payload.error || payload.msg || payload.message || error.message || "Unexpected request failure";
   return {
     status,
     code: payload.status || "unknown_error",
@@ -59,11 +59,19 @@ client.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config || {};
     const requestPath = originalRequest.url;
+    const payload = error?.response?.data || {};
+    const lowerMsg = String(payload.msg || payload.error || "").toLowerCase();
+    const isJwtValidation422 =
+      error?.response?.status === 422 &&
+      (lowerMsg.includes("token") ||
+        lowerMsg.includes("signature") ||
+        lowerMsg.includes("subject") ||
+        lowerMsg.includes("jwt"));
     const shouldSkipRefresh =
       AUTH_ROUTES.has(requestPath) ||
       !getAuthState()?.refreshToken;
 
-    if (error?.response?.status !== 401 || originalRequest.__retry || shouldSkipRefresh) {
+    if ((error?.response?.status !== 401 && !isJwtValidation422) || originalRequest.__retry || shouldSkipRefresh) {
       return Promise.reject(mapApiError(error));
     }
 

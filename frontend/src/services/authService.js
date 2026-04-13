@@ -6,6 +6,11 @@ export const login = async ({ email, password }) => {
   return response.data;
 };
 
+export const loginGuest = async () => {
+  const response = await client.post(API_PATHS.guestLogin, {});
+  return response.data;
+};
+
 export const signup = async ({ email, username, password }) => {
   const response = await client.post(API_PATHS.signup, { email, username, password });
   return response.data;
