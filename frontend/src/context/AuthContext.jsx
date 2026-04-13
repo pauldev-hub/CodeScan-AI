@@ -55,6 +55,23 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  const enterGuestMode = useCallback(async () => {
+    setLoading(true);
+    try {
+      const payload = await authService.loginGuest();
+      const nextState = {
+        user: payload.user,
+        accessToken: payload.access_token,
+        refreshToken: payload.refresh_token,
+      };
+      setStoredJson(AUTH_STORAGE_KEY, nextState);
+      setAuthState(nextState);
+      return nextState;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const signOut = useCallback(async () => {
     const refreshToken = authState?.refreshToken;
     try {
@@ -75,9 +92,10 @@ export const AuthProvider = ({ children }) => {
       loading,
       signIn,
       signUp,
+      enterGuestMode,
       signOut,
     }),
-    [authState, loading, signIn, signOut, signUp]
+    [authState, loading, signIn, signOut, signUp, enterGuestMode]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
