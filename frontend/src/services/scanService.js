@@ -4,16 +4,29 @@ import { API_PATHS } from "../utils/constants";
 const SCAN_SUBMIT_TIMEOUT_MS = 120000;
 const SCAN_READ_TIMEOUT_MS = 45000;
 
-export const submitScanByUrl = async (githubUrl) => {
+export const previewGithubRepository = async (githubUrl) => {
   const response = await client.post(
-    API_PATHS.scanUrl,
+    API_PATHS.scanUrlPreview,
     { github_url: githubUrl },
     { timeout: SCAN_SUBMIT_TIMEOUT_MS }
   );
   return response.data;
 };
 
-export const submitScanByPaste = async (code, language = "text") => {
+export const submitScanByUrl = async (githubUrl, options = {}) => {
+  const response = await client.post(
+    API_PATHS.scanUrl,
+    {
+      github_url: githubUrl,
+      selected_paths: options.selectedPaths || [],
+      scan_entire: options.scanEntireRepo ?? !(options.selectedPaths || []).length,
+    },
+    { timeout: SCAN_SUBMIT_TIMEOUT_MS }
+  );
+  return response.data;
+};
+
+export const submitScanByPaste = async (code, language = "auto") => {
   const response = await client.post(
     API_PATHS.scanPaste,
     { code, language },

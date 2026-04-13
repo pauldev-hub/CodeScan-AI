@@ -34,10 +34,18 @@ export const requestFixPreview = async ({ scanId, finding }) => {
       code_snippet: finding?.code_snippet,
       suggestion: finding?.fix_suggestion,
     });
+    const beforeText = response.data?.before || finding?.code_snippet || "";
+    const normalizedBefore = beforeText.trim()
+      ? beforeText
+      : "// Original code snippet unavailable for this finding.";
+    const afterText = response.data?.after || "";
+    const normalizedAfter = afterText.trim()
+      ? afterText
+      : `// No generated fix body was returned.\n// Suggested direction: ${finding?.fix_suggestion || "Apply safer input handling and validation."}`;
     return {
       source: "api",
-      before: response.data?.before || finding?.code_snippet || "",
-      after: response.data?.after || "",
+      before: normalizedBefore,
+      after: normalizedAfter,
       message: response.data?.message || "Fix preview generated.",
       language: response.data?.language || finding?.input_language || "javascript",
       change_summary: response.data?.change_summary || [],
