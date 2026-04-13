@@ -6,12 +6,24 @@ import { APP_ROUTES } from "../../utils/constants";
 import ThemeToggle from "./ThemeToggle";
 
 const Navbar = ({ showMenuButton = false, onMenuToggle }) => {
-  const { isAuthenticated, user, signOut } = useAuth();
+  const { isAuthenticated, user, enterGuestMode, loading, signOut } = useAuth();
   const navigate = useNavigate();
 
   const onLogout = async () => {
     await signOut();
     navigate(APP_ROUTES.landing, { replace: true });
+  };
+
+  const onGuestClick = async () => {
+    if (isAuthenticated || loading) {
+      return;
+    }
+    try {
+      await enterGuestMode();
+      navigate(APP_ROUTES.dashboard, { replace: true });
+    } catch {
+      // Keep current view when guest session bootstrap fails.
+    }
   };
 
   return (
@@ -73,9 +85,20 @@ const Navbar = ({ showMenuButton = false, onMenuToggle }) => {
             )}
           </nav>
           <ThemeToggle />
-          <span className="rounded-full border border-border bg-bg3 px-3 py-1.5 text-xs text-text2">
-            {isAuthenticated ? user?.email || "Signed In" : "Guest"}
-          </span>
+          {isAuthenticated ? (
+            <span className="rounded-full border border-border bg-bg3 px-3 py-1.5 text-xs text-text2">
+              {user?.email || "Signed In"}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={onGuestClick}
+              disabled={loading}
+              className="rounded-full border border-border bg-bg3 px-3 py-1.5 text-xs text-text2 transition-colors hover:border-[color:var(--border-strong)] hover:text-text disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Continue as Guest
+            </button>
+          )}
           {isAuthenticated ? (
             <>
               <Link
