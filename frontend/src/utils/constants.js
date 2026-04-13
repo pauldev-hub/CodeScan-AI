@@ -35,10 +35,12 @@ export const SOCKET_EVENTS = {
 
 export const API_PATHS = {
   login: "/api/auth/login",
+  guestLogin: "/api/auth/guest",
   signup: "/api/auth/register",
   refresh: "/api/auth/refresh",
   logout: "/api/auth/logout",
   scanUrl: "/api/scan/url",
+  scanUrlPreview: "/api/scan/url/preview",
   scanPaste: "/api/scan/paste",
   scanUpload: "/api/scan/upload",
   scanStatus: (scanId) => `/api/scan/${scanId}/status`,
@@ -54,4 +56,6 @@ export const API_PATHS = {
   chatConversations: "/api/chat/conversations",
   chatConversation: (conversationId) => `/api/chat/conversations/${conversationId}`,
   chatMessages: (conversationId) => `/api/chat/conversations/${conversationId}/messages`,
+  chatMessageFeedback: (conversationId, messageId) =>
+    `/api/chat/conversations/${conversationId}/messages/${messageId}/feedback`,
 };
