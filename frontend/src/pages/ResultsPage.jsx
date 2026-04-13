@@ -22,6 +22,7 @@ import { useBeginnerMode } from "../hooks/useBeginnerMode";
 import { useScanStatus } from "../hooks/useScanStatus";
 import { requestFixPreview } from "../services/fixService";
 import { getScanResults, regenerateLearnContent } from "../services/scanService";
+import { formatDateTimeInIndia } from "../utils/datetime";
 import { acquireLock, releaseLock } from "../utils/storage";
 
 const resultTabs = [
@@ -31,20 +32,6 @@ const resultTabs = [
   { value: "dependencies", label: "Dependencies" },
   { value: "learn", label: "Learn" },
 ];
-
-const formatDateTime = (value) => {
-  if (!value) {
-    return "n/a";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "n/a";
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsed);
-};
 
 const runAttackDemo = (finding, payload) => {
   const normalizedPayload = (payload || "").trim() || finding?.live_simulator?.placeholder || "' OR '1'='1";
@@ -79,6 +66,63 @@ const evaluateChallenge = (expectedKeywords = [], guess = "") => {
   return {
     isSuccess: matches.length > 0,
     score: matches.length,
+  };
+};
+
+const toObjectList = (value) => (Array.isArray(value) ? value.filter((item) => item && typeof item === "object") : []);
+
+const buildFallbackLearnTab = (findings = [], inputLanguage = "code") => {
+  const topItems = findings.slice(0, 5);
+  return {
+    micro_lessons: topItems.map((item) => ({
+      finding_id: item.id,
+      title: item.title,
+      lesson: item.teaching_focus || item.fix_suggestion || "Use safer patterns and validate inputs early.",
+      story: `In ${inputLanguage}, this issue appears when input is trusted too early.`,
+      fact: item.owasp_category || "A04: Insecure Design",
+    })),
+    quiz: topItems.map((item) => ({
+      question: `Why is '${item.title}' risky here?`,
+      answer: item.plain_english || item.description || item.fix_suggestion || "It can change app behavior in unsafe ways.",
+      difficulty: "beginner",
+    })),
+    fix_it_yourself: topItems.map((item) => ({
+      finding_id: item.id,
+      prompt: `Rewrite the code path to avoid ${String(item.title || "this issue").toLowerCase()}.`,
+      hint: item.fix_suggestion || "Use input validation and safer APIs.",
+      success_criteria: "The risky behavior is removed without breaking intended behavior.",
+    })),
+    debate_starters: topItems.map((item) => ({
+      finding_id: item.id,
+      starter: `I think '${item.title}' might be mitigated because...`,
+      coach_reply: "Point to concrete guards: validation, escaping, auth checks, or parameterization.",
+    })),
+    hacker_challenges: topItems.map((item) => ({
+      finding_id: item.id,
+      title: item.title,
+      prompt: item.hacker_challenge?.prompt || `What payload would you try first against ${item.title}?`,
+      hint: item.hacker_challenge?.hint || "Think about where untrusted input enters the code.",
+      expected_keywords: item.hacker_challenge?.expected_keywords || ["payload", "input"],
+      solution: item.hacker_challenge?.solution || item.fix_suggestion || "Constrain input and remove unsafe execution paths.",
+    })),
+    code_roasts: topItems.map((item) => ({
+      finding_id: item.id,
+      title: item.title,
+      gentle: item.code_roast?.gentle || "This is fixable with safer defaults and one focused refactor.",
+      brutal: item.code_roast?.brutal || "This path gives attackers too much leverage. Lock it down now.",
+      teaching_point: item.code_roast?.teaching_point || item.fix_suggestion || "Prefer explicit validation and strict APIs.",
+    })),
+    live_attack_labs: topItems.map((item) => ({
+      finding_id: item.id,
+      title: item.title,
+      label: item.live_simulator?.label || "Payload sandbox",
+      placeholder: item.live_simulator?.placeholder || "Try a test payload",
+      safe_default_payload: item.live_simulator?.safe_default_payload || item.live_simulator?.placeholder || "payload",
+      expected_result: item.live_simulator?.expected_result || "Unsafe code may treat the payload as executable logic.",
+      impact: item.live_simulator?.impact || "An attacker could influence behavior or expose sensitive data.",
+    })),
+    source: "frontend_fallback",
+    generated_at: new Date().toISOString(),
   };
 };
 
@@ -183,12 +227,52 @@ const ResultsPage = () => {
   const currentFindings = useMemo(() => {
     if (!results?.findings) return [];
     if (activeTab === "security") return results.tabs?.security?.findings || [];
-    if (activeTab === "overview") return results.findings.filter((item) => item.category !== "security");
+    if (activeTab === "overview") return results.findings;
     return results.findings;
   }, [activeTab, results]);
 
   const overview = results?.tabs?.overview;
   const chartData = overview?.matrix || [];
+  const fallbackLearnTab = useMemo(
+    () => buildFallbackLearnTab(results?.findings || [], results?.input_language || "code"),
+    [results]
+  );
+  const learnTab = useMemo(() => {
+    const raw = results?.tabs?.learn || {};
+    return {
+      micro_lessons: toObjectList(raw.micro_lessons).length ? toObjectList(raw.micro_lessons) : fallbackLearnTab.micro_lessons,
+      quiz: toObjectList(raw.quiz).length ? toObjectList(raw.quiz) : fallbackLearnTab.quiz,
+      fix_it_yourself: toObjectList(raw.fix_it_yourself).length ? toObjectList(raw.fix_it_yourself) : fallbackLearnTab.fix_it_yourself,
+      debate_starters: toObjectList(raw.debate_starters).length ? toObjectList(raw.debate_starters) : fallbackLearnTab.debate_starters,
+      hacker_challenges: toObjectList(raw.hacker_challenges).length ? toObjectList(raw.hacker_challenges) : fallbackLearnTab.hacker_challenges,
+      code_roasts: toObjectList(raw.code_roasts).length ? toObjectList(raw.code_roasts) : fallbackLearnTab.code_roasts,
+      live_attack_labs: toObjectList(raw.live_attack_labs).length ? toObjectList(raw.live_attack_labs) : fallbackLearnTab.live_attack_labs,
+      source: raw.source || fallbackLearnTab.source,
+      generated_at: raw.generated_at || fallbackLearnTab.generated_at,
+    };
+  }, [results, fallbackLearnTab]);
+  const hasLearnContent = useMemo(() => {
+    const collections = [
+      learnTab.micro_lessons,
+      learnTab.quiz,
+      learnTab.fix_it_yourself,
+      learnTab.debate_starters,
+      learnTab.code_roasts,
+      learnTab.hacker_challenges,
+      learnTab.live_attack_labs,
+    ];
+    return collections.some((items) => Array.isArray(items) && items.length > 0);
+  }, [learnTab]);
+  const dependencyTab = results?.tabs?.dependencies || {};
+  const resultsQuickPrompts = useMemo(() => {
+    const starters = Array.isArray(results?.chat_starters) ? results.chat_starters.map((item) => item.message).filter(Boolean) : [];
+    return starters.length ? starters : [
+      "Explain the highest-risk issue in plain English.",
+      "What should I fix first and why?",
+      "Search code for auth middleware",
+      "Roast this code gently.",
+    ];
+  }, [results]);
 
   const onGenerateLearn = async () => {
     if (!scanId) {
@@ -270,8 +354,37 @@ const ResultsPage = () => {
             <ScrollReveal>
               <Panel title="Results Hub" description={`Scan ${scanId}`}>
                 {resultsLoading && !results ? <div className="grid gap-4 md:grid-cols-[120px_1fr]"><ScoreRingSkeleton /><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><StatCardSkeleton /><StatCardSkeleton /><StatCardSkeleton /><StatCardSkeleton /></div></div> : null}
-                {!results && !resultsLoading ? <div className="space-y-3"><p className="text-sm text-text2">Status: <span className="font-semibold text-text">{statusState.status}</span></p><div className="h-2 w-full overflow-hidden rounded-full bg-bg3"><div className="h-full bg-accent transition-all duration-300" style={{ width: `${Math.max(5, statusState.progress || 0)}%` }} /></div></div> : null}
-                {results ? <div className="space-y-4"><div className="grid gap-4 lg:grid-cols-[140px_minmax(0,1fr)]"><ScoreRing score={results.health_score ?? 0} /><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><SeverityStatCard label="Findings" value={results.summary?.total_findings ?? 0} /><SeverityStatCard label="Critical" value={results.summary?.critical_count ?? 0} className="text-red" /><SeverityStatCard label="Complexity" value={results.summary?.complexity_score ?? 0} /><SeverityStatCard label="Fix Time (min)" value={results.summary?.fix_time_total_minutes ?? 0} /></div></div><div className="flex flex-wrap gap-3 text-xs text-text2"><span className="rounded-full border border-border bg-bg3 px-3 py-1.5">Provider: {results.provider_used || "local_fallback"}</span><span className="rounded-full border border-border bg-bg3 px-3 py-1.5">Started: {formatDateTime(results.created_at)}</span><span className="rounded-full border border-border bg-bg3 px-3 py-1.5">Finished: {formatDateTime(results.completed_at)}</span></div></div> : null}
+                {!results && !resultsLoading ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-sm text-text2">
+                        Status: <span className="font-semibold text-text">{statusState.status}</span>
+                      </p>
+                      <span className="rounded-full border border-border bg-bg3 px-3 py-1 text-xs text-text2">
+                        {Math.max(5, statusState.progress || 0)}% complete
+                      </span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-bg3">
+                      <div className="h-full bg-accent transition-all duration-300" style={{ width: `${Math.max(5, statusState.progress || 0)}%` }} />
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="rounded-2xl border border-border bg-bg3/60 p-4">
+                        <div className="h-3 w-20 animate-pulse rounded bg-bg4" />
+                        <div className="mt-3 h-8 w-28 animate-pulse rounded bg-bg4" />
+                      </div>
+                      <div className="rounded-2xl border border-border bg-bg3/60 p-4">
+                        <div className="h-3 w-24 animate-pulse rounded bg-bg4" />
+                        <div className="mt-3 h-8 w-32 animate-pulse rounded bg-bg4" />
+                      </div>
+                      <div className="rounded-2xl border border-border bg-bg3/60 p-4">
+                        <div className="h-3 w-16 animate-pulse rounded bg-bg4" />
+                        <div className="mt-3 h-8 w-20 animate-pulse rounded bg-bg4" />
+                      </div>
+                    </div>
+                    <p className="text-sm text-text2">Preparing findings, dependency clues, and guided learning blocks for this scan.</p>
+                  </div>
+                ) : null}
+                {results ? <div className="space-y-4"><div className="grid gap-4 lg:grid-cols-[140px_minmax(0,1fr)]"><ScoreRing score={results.health_score ?? 0} /><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><SeverityStatCard label="Findings" value={results.summary?.total_findings ?? 0} /><SeverityStatCard label="Critical" value={results.summary?.critical_count ?? 0} className="text-red" /><SeverityStatCard label="Complexity" value={results.summary?.complexity_score ?? 0} /><SeverityStatCard label="Fix Time (min)" value={results.summary?.fix_time_total_minutes ?? 0} /></div></div><div className="flex flex-wrap gap-3 text-xs text-text2"><span className="rounded-full border border-border bg-bg3 px-3 py-1.5">Provider: {results.provider_used || "local_fallback"}</span><span className="rounded-full border border-border bg-bg3 px-3 py-1.5">Started: {formatDateTimeInIndia(results.created_at)}</span><span className="rounded-full border border-border bg-bg3 px-3 py-1.5">Finished: {formatDateTimeInIndia(results.completed_at)}</span></div></div> : null}
               </Panel>
             </ScrollReveal>
 
@@ -309,13 +422,88 @@ const ResultsPage = () => {
 
                 {activeTab === "security" ? <ScrollReveal delay={100}><Panel title="Security" description="Threat warnings, attack examples, and security-focused findings."><div className="grid gap-3 md:grid-cols-2">{(results.tabs?.security?.findings || []).map((item) => <div key={item.id} className="rounded-[24px] border border-border bg-bg3/70 p-4"><p className="text-sm font-semibold text-text">{item.title}</p><p className="mt-2 text-sm text-text2">{item.attack_example}</p><p className="mt-2 text-xs text-text3">Exploit difficulty: {item.exploit_difficulty}/100</p><div className="mt-3 rounded-2xl border border-border bg-bg2 p-3"><p className="text-xs uppercase tracking-[0.14em] text-text3">{item.live_simulator?.label}</p><p className="mt-2 text-sm text-text2">{item.live_simulator?.placeholder}</p></div></div>)}</div></Panel></ScrollReveal> : null}
                 {activeTab === "map" ? <ScrollReveal delay={100}><Panel title="Map" description="Heat map, dead code signal, and duplication hints."><div className="grid gap-4 lg:grid-cols-2"><div className="rounded-[24px] border border-border bg-bg3/70 p-4"><p className="text-sm font-semibold text-text">Code health heat map</p><div className="mt-4 h-[280px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={results.tabs?.map?.heat_map || []}><CartesianGrid stroke="var(--border)" /><XAxis dataKey="file_path" stroke="var(--text2)" hide /><YAxis stroke="var(--text2)" /><Tooltip /><Bar dataKey="health_score" fill="var(--accent)" radius={[8, 8, 0, 0]} /></BarChart></ResponsiveContainer></div></div><div className="rounded-[24px] border border-border bg-bg3/70 p-4"><p className="text-sm font-semibold text-text">Duplication detector</p><div className="mt-4 space-y-3">{(results.tabs?.map?.duplicates || []).map((item) => <div key={item.id} className="rounded-2xl border border-border bg-bg2 px-4 py-3 text-sm text-text2">{item.summary}</div>)}{!(results.tabs?.map?.duplicates || []).length ? <p className="text-sm text-text2">No strong duplication pattern detected.</p> : null}</div></div></div></Panel></ScrollReveal> : null}
-                {activeTab === "dependencies" ? <ScrollReveal delay={100}><Panel title="Dependencies" description="Package risks, contract gaps, and update cues."><div className="grid gap-3">{(results.tabs?.dependencies?.dependency_audit || []).map((item) => <div key={`${item.name}-${item.version}`} className="rounded-2xl border border-border bg-bg3/70 px-4 py-3"><p className="text-sm font-semibold text-text">{item.name} <span className="text-text2">{item.version}</span></p><p className="mt-1 text-xs text-text2">{item.severity} risk | {item.fix_available}</p></div>)}{!(results.tabs?.dependencies?.dependency_audit || []).length ? <p className="text-sm text-text2">No package manifest data detected in this scan input.</p> : null}</div></Panel></ScrollReveal> : null}
+                {activeTab === "dependencies" ? (
+                  <ScrollReveal delay={100}>
+                    <Panel title="Dependencies" description="Package risks, contract gaps, and file-scoped follow-up guidance.">
+                      <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap gap-2 text-xs text-text2">
+                            <span className="rounded-full border border-border bg-bg3 px-3 py-1.5">
+                              Packages: {dependencyTab.dependency_count ?? 0}
+                            </span>
+                            <span className="rounded-full border border-border bg-bg3 px-3 py-1.5">
+                              Manifests: {dependencyTab.manifest_count ?? 0}
+                            </span>
+                            <span className="rounded-full border border-border bg-bg3 px-3 py-1.5">
+                              Targets: {results.source_overview?.target_count ?? results.file_count ?? 0}
+                            </span>
+                          </div>
+
+                          {(dependencyTab.dependency_audit || []).map((item) => (
+                            <div key={`${item.manifest_path}-${item.name}-${item.version}`} className="rounded-2xl border border-border bg-bg3/70 px-4 py-3">
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <p className="text-sm font-semibold text-text">
+                                  {item.name} <span className="text-text2">{item.version}</span>
+                                </p>
+                                <span className="rounded-full border border-border bg-bg2 px-2.5 py-1 text-[11px] uppercase tracking-[0.14em] text-text3">
+                                  {item.ecosystem}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-text3">{item.manifest_path}</p>
+                              <p className="mt-2 text-sm text-text2">{item.fix_available}</p>
+                              <p className="mt-2 text-xs text-text3">{item.severity} review priority • {item.section}</p>
+                            </div>
+                          ))}
+
+                          {!(dependencyTab.dependency_audit || []).length ? (
+                            <div className="rounded-2xl border border-border bg-bg3/70 p-4">
+                              <p className="text-sm text-text2">No package manifest data was detected in this scan input.</p>
+                              <p className="mt-2 text-xs text-text3">Upload or include files like package.json, requirements.txt, pyproject.toml, Cargo.toml, or go.mod for richer dependency analysis.</p>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="space-y-4">
+                          <div className="rounded-[24px] border border-border bg-bg3/70 p-4">
+                            <p className="text-sm font-semibold text-text">Scanned targets</p>
+                            <div className="mt-3 space-y-2">
+                              {(dependencyTab.scanned_targets || results.source_overview?.targets || []).slice(0, 8).map((path) => (
+                                <div key={path} className="rounded-xl border border-border bg-bg2 px-3 py-2 text-xs text-text2">
+                                  {path}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="rounded-[24px] border border-border bg-bg3/70 p-4">
+                            <p className="text-sm font-semibold text-text">File findings & fixes</p>
+                            <div className="mt-3 space-y-3">
+                              {(dependencyTab.file_findings || []).map((item) => (
+                                <div key={item.file_path} className="rounded-xl border border-border bg-bg2 px-3 py-3">
+                                  <p className="text-sm font-semibold text-text">{item.file_path}</p>
+                                  <p className="mt-1 text-xs text-text2">
+                                    {item.issue_count} issues • {item.severities.join(", ")}
+                                  </p>
+                                  <p className="mt-2 text-sm text-text2">{item.top_issue}</p>
+                                  <p className="mt-2 text-xs text-text3">Fix: {item.fix_summary}</p>
+                                </div>
+                              ))}
+                              {!(dependencyTab.file_findings || []).length ? (
+                                <p className="text-sm text-text2">No file-level guidance is available for this scan yet.</p>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </Panel>
+                  </ScrollReveal>
+                ) : null}
                 {activeTab === "learn" ? (
                   <ScrollReveal delay={100}>
                     <Panel title="Learn" description="Guided lessons, quiz prompts, and interactive practice mode.">
                       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                         <div className="text-xs text-text2">
-                          Source: {results.tabs?.learn?.source || "scan_generated"} | Updated: {formatDateTime(results.tabs?.learn?.generated_at)}
+                          Source: {learnTab.source || "scan_generated"} | Updated: {formatDateTimeInIndia(learnTab.generated_at)}
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <button
@@ -325,15 +513,27 @@ const ResultsPage = () => {
                           >
                             Code roast: {roastMode}
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => onQuickMessage(roastMode === "brutal" ? "Be brutal and roast this code." : "Roast this code gently but keep it useful.")}
+                            className="rounded-xl border border-border bg-bg3 px-4 py-2 text-sm font-semibold text-text2"
+                          >
+                            Send roast to chat
+                          </button>
                           <button type="button" onClick={onGenerateLearn} disabled={learnState.loading} className="inline-flex items-center gap-2 rounded-xl border border-[color:var(--accent)] bg-[linear-gradient(135deg,var(--accent),var(--accent-2))] px-4 py-2 text-sm font-semibold text-[#23150c] disabled:opacity-50"><Sparkles size={14} />{learnState.loading ? "Generating..." : "AI Generate"}</button>
                         </div>
                       </div>
                       {learnState.error ? <p className="mb-4 text-sm text-red">{learnState.error}</p> : null}
+                      {!hasLearnContent ? (
+                        <div className="mb-4 rounded-2xl border border-border bg-bg3/70 p-4">
+                          <p className="text-sm text-text2">Learn content is empty for this scan right now. Click AI Generate to repopulate lessons and challenges.</p>
+                        </div>
+                      ) : null}
                       <div className="grid gap-4 lg:grid-cols-2">
                         <div className="rounded-[24px] border border-border bg-bg3/70 p-4">
                           <p className="text-sm font-semibold text-text">Micro lessons</p>
                           <div className="mt-4 space-y-3">
-                            {(results.tabs?.learn?.micro_lessons || []).map((item) => (
+                            {(learnTab.micro_lessons || []).map((item) => (
                               <div key={`${item.finding_id || item.title}-lesson`} className="rounded-2xl border border-border bg-bg2 px-4 py-3">
                                 <p className="text-sm font-semibold text-text">{item.title}</p>
                                 <p className="mt-1 text-sm text-text2">{item.lesson}</p>
@@ -345,13 +545,13 @@ const ResultsPage = () => {
                         <div className="rounded-[24px] border border-border bg-bg3/70 p-4">
                           <p className="text-sm font-semibold text-text">Quiz & debate starters</p>
                           <div className="mt-4 space-y-3">
-                            {(results.tabs?.learn?.quiz || []).map((item) => (
+                            {(learnTab.quiz || []).map((item) => (
                               <div key={item.question} className="rounded-2xl border border-border bg-bg2 px-4 py-3">
                                 <p className="text-sm font-semibold text-text">{item.question}</p>
                                 <p className="mt-1 text-sm text-text2">{item.answer}</p>
                               </div>
                             ))}
-                            {(results.tabs?.learn?.debate_starters || []).map((item) => (
+                            {(learnTab.debate_starters || []).map((item) => (
                               <div key={`${item.finding_id}-debate`} className="rounded-2xl border border-border bg-bg2 px-4 py-3">
                                 <p className="text-sm font-semibold text-text">Debate this finding</p>
                                 <p className="mt-1 text-sm text-text2">{item.starter}</p>
@@ -363,7 +563,7 @@ const ResultsPage = () => {
                         <div className="rounded-[24px] border border-border bg-bg3/70 p-4 lg:col-span-2">
                           <p className="text-sm font-semibold text-text">Fix it yourself</p>
                           <div className="mt-4 grid gap-3 md:grid-cols-2">
-                            {(results.tabs?.learn?.fix_it_yourself || []).map((item) => (
+                            {(learnTab.fix_it_yourself || []).map((item) => (
                               <div key={`${item.finding_id}-fix`} className="rounded-2xl border border-border bg-bg2 px-4 py-3">
                                 <p className="text-sm font-semibold text-text">{item.prompt}</p>
                                 <p className="mt-1 text-sm text-text2">{item.hint}</p>
@@ -378,7 +578,7 @@ const ResultsPage = () => {
                             <span className="text-xs text-text3">Interactive tone switch</span>
                           </div>
                           <div className="mt-4 grid gap-3 md:grid-cols-2">
-                            {(results.tabs?.learn?.code_roasts || []).map((item) => (
+                            {(learnTab.code_roasts || []).map((item) => (
                               <div key={`${item.finding_id}-roast`} className="rounded-2xl border border-border bg-bg2 px-4 py-3">
                                 <p className="text-sm font-semibold text-text">{item.title}</p>
                                 <p className="mt-2 text-sm text-text2">{roastMode === "brutal" ? item.brutal : item.gentle}</p>
@@ -390,7 +590,7 @@ const ResultsPage = () => {
                         <div className="rounded-[24px] border border-border bg-bg3/70 p-4 lg:col-span-2">
                           <p className="text-sm font-semibold text-text">Hacker Challenge Mode</p>
                           <div className="mt-4 grid gap-3 md:grid-cols-2">
-                            {(results.tabs?.learn?.hacker_challenges || []).map((item) => {
+                            {(learnTab.hacker_challenges || []).map((item) => {
                               const current = challengeState[item.finding_id] || {};
                               const result = current.evaluation;
                               return (
@@ -431,7 +631,7 @@ const ResultsPage = () => {
                         <div className="rounded-[24px] border border-border bg-bg3/70 p-4 lg:col-span-2">
                           <p className="text-sm font-semibold text-text">Live Attack Simulator</p>
                           <div className="mt-4 grid gap-3 md:grid-cols-2">
-                            {(results.tabs?.learn?.live_attack_labs || []).map((item) => {
+                            {(learnTab.live_attack_labs || []).map((item) => {
                               const payload = labState.payloads[item.finding_id] ?? item.safe_default_payload ?? item.placeholder;
                               const output = labState.outputs[item.finding_id];
                               return (
@@ -487,6 +687,12 @@ const ResultsPage = () => {
                     {resultsError ? <p className="text-sm text-red">{resultsError}</p> : null}
                     {resultsLoading && !results ? <div className="space-y-3"><FindingCardSkeleton /><FindingCardSkeleton /></div> : null}
                     <div className="space-y-3">
+                      {!currentFindings.length && results ? (
+                        <div className="rounded-2xl border border-border bg-bg3/70 p-4">
+                          <p className="text-sm text-text2">No findings are visible in this view yet.</p>
+                          <p className="mt-2 text-xs text-text3">Try another tab, or ask DevChat to summarize what the scan found in the selected files.</p>
+                        </div>
+                      ) : null}
                       {currentFindings.map((finding) => (
                         <div key={finding.id} className="space-y-2">
                           <IssueDetail finding={finding} beginnerMode={beginnerMode} />
@@ -552,10 +758,10 @@ const ResultsPage = () => {
           </section>
         </ErrorBoundary>
 
-        {isDesktopChat ? <ChatBoundary><div className="xl:sticky xl:top-[84px]"><DevChatPanel title="Results DevChat" subtitle="Persistent scan-aware chat with Groq primary and Gemini fallback." messages={messages} draft={draft} setDraft={setDraft} onSend={onSend} onClear={clearMessages} status={status} isStreaming={isStreaming} onQuickPrompt={onQuickMessage} /></div></ChatBoundary> : null}
+        {isDesktopChat ? <ChatBoundary><div className="xl:sticky xl:top-[84px]"><DevChatPanel title="Results DevChat" subtitle="Persistent scan-aware chat with smarter memory, repo search, and interactive roast mode." messages={messages} draft={draft} setDraft={setDraft} onSend={onSend} onClear={clearMessages} status={status} isStreaming={isStreaming} onQuickPrompt={onQuickMessage} quickPrompts={resultsQuickPrompts} minimalHeader /></div></ChatBoundary> : null}
       </div>
 
-      {!isDesktopChat ? <div className={`fixed inset-0 z-40 ${chatOpen ? "" : "pointer-events-none"}`}><button type="button" onClick={() => setChatOpen(false)} className={`absolute inset-0 bg-black/30 transition-opacity duration-300 ${chatOpen ? "opacity-100" : "opacity-0"}`} aria-label="Close chat drawer" /><div className={`absolute right-0 top-0 h-full w-full max-w-[360px] p-3 transition-transform duration-300 ${chatOpen ? "translate-x-0" : "translate-x-full"}`}><ChatBoundary><div className="h-full overflow-auto"><DevChatPanel title="Results DevChat" subtitle="Persistent scan-aware chat with Groq primary and Gemini fallback." messages={messages} draft={draft} setDraft={setDraft} onSend={onSend} onClear={clearMessages} onClose={() => setChatOpen(false)} status={status} isStreaming={isStreaming} onQuickPrompt={onQuickMessage} /></div></ChatBoundary></div></div> : null}
+      {!isDesktopChat ? <div className={`fixed inset-0 z-40 ${chatOpen ? "" : "pointer-events-none"}`}><button type="button" onClick={() => setChatOpen(false)} className={`absolute inset-0 bg-black/30 transition-opacity duration-300 ${chatOpen ? "opacity-100" : "opacity-0"}`} aria-label="Close chat drawer" /><div className={`absolute right-0 top-0 h-full w-full max-w-[360px] p-3 transition-transform duration-300 ${chatOpen ? "translate-x-0" : "translate-x-full"}`}><ChatBoundary><div className="h-full overflow-auto"><DevChatPanel title="Results DevChat" subtitle="Persistent scan-aware chat with smarter memory, repo search, and interactive roast mode." messages={messages} draft={draft} setDraft={setDraft} onSend={onSend} onClear={clearMessages} onClose={() => setChatOpen(false)} status={status} isStreaming={isStreaming} onQuickPrompt={onQuickMessage} quickPrompts={resultsQuickPrompts} minimalHeader /></div></ChatBoundary></div></div> : null}
     </main>
   );
 };
