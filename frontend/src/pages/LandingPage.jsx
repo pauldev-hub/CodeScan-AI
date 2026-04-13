@@ -1,16 +1,21 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight, Shield, Sparkles, TerminalSquare } from "lucide-react";
 
 import Button from "../components/Common/Button";
 import ScrollReveal from "../components/Common/ScrollReveal";
+import { useAuth } from "../hooks/useAuth";
 import { APP_ROUTES } from "../utils/constants";
 
-const LandingPage = () => (
-  <main className="mx-auto w-[min(1880px,calc(100vw-24px))] px-3 pb-16 pt-6 md:px-4 md:pb-24 md:pt-10">
-    <section className="codescan-editor-surface overflow-hidden">
-      <div className="grid gap-0 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="px-5 py-8 md:px-8 md:py-12 xl:px-12 xl:py-16">
-          <ScrollReveal>
+const LandingPage = () => {
+  const { enterGuestMode, loading } = useAuth();
+  const navigate = useNavigate();
+
+  return (
+    <main className="mx-auto w-[min(1880px,calc(100vw-24px))] px-3 pb-16 pt-6 md:px-4 md:pb-24 md:pt-10">
+      <section className="codescan-editor-surface overflow-hidden">
+        <div className="grid gap-0 xl:grid-cols-[1.2fr_0.8fr]">
+          <div className="px-5 py-8 md:px-8 md:py-12 xl:px-12 xl:py-16">
+            <ScrollReveal>
             <p className="font-mono text-xs uppercase tracking-[0.24em] text-accent">Analyze. Understand. Secure.</p>
             <h1 className="mt-4 max-w-4xl text-5xl font-bold leading-[0.94] text-text md:text-7xl">
               Premium code review
@@ -28,15 +33,30 @@ const LandingPage = () => (
                   <ArrowRight size={16} />
                 </Button>
               </Link>
+              <Button
+                variant="ghost"
+                size="lg"
+                isLoading={loading}
+                onClick={async () => {
+                  try {
+                    await enterGuestMode();
+                    navigate(APP_ROUTES.dashboard, { replace: true });
+                  } catch {
+                    // Preserve existing landing page state if guest session fails.
+                  }
+                }}
+              >
+                Continue as Guest
+              </Button>
               <Link to={APP_ROUTES.scan}>
                 <Button variant="ghost" size="lg">
                   Open Scan Workspace
                 </Button>
               </Link>
             </div>
-          </ScrollReveal>
+            </ScrollReveal>
 
-          <ScrollReveal className="mt-10 grid gap-3 md:grid-cols-3" delay={120}>
+            <ScrollReveal className="mt-10 grid gap-3 md:grid-cols-3" delay={120}>
             <div className="rounded-[22px] border border-border bg-bg3/70 p-4">
               <Shield size={18} className="text-accent" />
               <p className="mt-3 text-sm font-semibold text-text">Risk-aware summaries</p>
@@ -52,11 +72,11 @@ const LandingPage = () => (
               <p className="mt-3 text-sm font-semibold text-text">Beginner-safe AI guidance</p>
               <p className="mt-1 text-sm text-text2">Explain impact, risk, and fixes without the jargon wall.</p>
             </div>
-          </ScrollReveal>
-        </div>
+            </ScrollReveal>
+          </div>
 
-        <div className="border-l border-border bg-[linear-gradient(180deg,rgba(255,255,255,0.02),transparent)] p-5 md:p-8">
-          <ScrollReveal className="h-full" delay={160}>
+          <div className="border-l border-border bg-[linear-gradient(180deg,rgba(255,255,255,0.02),transparent)] p-5 md:p-8">
+            <ScrollReveal className="h-full" delay={160}>
             <div className="flex items-center justify-between rounded-2xl border border-border bg-bg3/70 px-4 py-3">
               <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-text3">scan.workspace.tsx</span>
               <span className="rounded-full border border-border bg-bg2 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-accent">
@@ -102,11 +122,12 @@ const LandingPage = () => (
                 </div>
               </div>
             </div>
-          </ScrollReveal>
+            </ScrollReveal>
+          </div>
         </div>
-      </div>
-    </section>
-  </main>
-);
+      </section>
+    </main>
+  );
+};
 
 export default LandingPage;
