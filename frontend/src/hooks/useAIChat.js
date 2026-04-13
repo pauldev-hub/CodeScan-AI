@@ -6,11 +6,22 @@ import {
   disconnectChatSocket,
   getConversation,
   onChatSocketEvent,
+  setConversationMessageFeedback,
   sendConversationMessage,
   startChatSession,
 } from "../services/devChatService";
 import { SOCKET_EVENTS } from "../utils/constants";
 import { useAuth } from "./useAuth";
+
+const getConversationMessages = (payload) => {
+  if (Array.isArray(payload?.messages)) {
+    return payload.messages;
+  }
+  if (Array.isArray(payload?.items)) {
+    return payload.items;
+  }
+  return [];
+};
 
 export const useAIChat = ({ scanId = null, conversationId = null, autoCreate = false } = {}) => {
   const { accessToken } = useAuth();
@@ -19,6 +30,7 @@ export const useAIChat = ({ scanId = null, conversationId = null, autoCreate = f
   const [messages, setMessages] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [scanCompleteEvent, setScanCompleteEvent] = useState(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const activeConversationIdRef = useRef(conversationId);
 
   useEffect(() => {
@@ -141,10 +153,27 @@ export const useAIChat = ({ scanId = null, conversationId = null, autoCreate = f
         setMessages([]);
         return;
       }
-      const payload = await getConversation(activeConversationId);
-      if (!cancelled) {
-        setMessages(payload.messages || []);
-        startChatSession({ conversationId: activeConversationId, scanId });
+      setConversationLoading(true);
+      try {
+        const payload = await getConversation(activeConversationId);
+        if (!cancelled) {
+          setMessages(getConversationMessages(payload));
+          startChatSession({ conversationId: activeConversationId, scanId });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setMessages([
+            {
+              id: `conversation-load-error-${Date.now()}`,
+              role: "system",
+              content: error?.message || "Unable to load this conversation right now.",
+            },
+          ]);
+        }
+      } finally {
+        if (!cancelled) {
+          setConversationLoading(false);
+        }
       }
     };
     loadConversation();
@@ -152,6 +181,33 @@ export const useAIChat = ({ scanId = null, conversationId = null, autoCreate = f
       cancelled = true;
     };
   }, [activeConversationId, scanId]);
+
+  const openConversation = useCallback(
+    async (targetConversationId) => {
+      if (!targetConversationId) {
+        return;
+      }
+      setActiveConversationId(targetConversationId);
+      activeConversationIdRef.current = targetConversationId;
+      setConversationLoading(true);
+      try {
+        const payload = await getConversation(targetConversationId);
+        setMessages(getConversationMessages(payload));
+        startChatSession({ conversationId: targetConversationId, scanId });
+      } catch (error) {
+        setMessages([
+          {
+            id: `conversation-open-error-${Date.now()}`,
+            role: "system",
+            content: error?.message || "Unable to open this conversation.",
+          },
+        ]);
+      } finally {
+        setConversationLoading(false);
+      }
+    },
+    [scanId]
+  );
 
   const sendMessage = useCallback(
     async (text) => {
@@ -178,17 +234,68 @@ export const useAIChat = ({ scanId = null, conversationId = null, autoCreate = f
     [autoCreate, isStreaming, scanId]
   );
 
+  const rateMessage = useCallback(async (messageId, nextFeedback) => {
+    const conversationIdForAction = activeConversationIdRef.current;
+    if (!conversationIdForAction || !messageId) {
+      return;
+    }
+
+    setMessages((prev) =>
+      prev.map((item) =>
+        item.id === messageId && item.role === "assistant"
+          ? { ...item, feedback: nextFeedback }
+          : item
+      )
+    );
+
+    try {
+      const saved = await setConversationMessageFeedback({
+        conversationId: conversationIdForAction,
+        messageId,
+        feedback: nextFeedback,
+      });
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === messageId && item.role === "assistant"
+            ? { ...item, feedback: saved?.feedback ?? nextFeedback }
+            : item
+        )
+      );
+    } catch {
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === messageId && item.role === "assistant"
+            ? { ...item, feedback: null }
+            : item
+        )
+      );
+    }
+  }, []);
+
   return useMemo(
     () => ({
       activeConversationId,
       setActiveConversationId,
+      openConversation,
       messages,
       sendMessage,
+      rateMessage,
       status,
       isStreaming,
+      conversationLoading,
       scanCompleteEvent,
       clearMessages: () => setMessages([]),
     }),
-    [activeConversationId, isStreaming, messages, scanCompleteEvent, sendMessage, status]
+    [
+      activeConversationId,
+      conversationLoading,
+      isStreaming,
+      messages,
+      openConversation,
+      rateMessage,
+      scanCompleteEvent,
+      sendMessage,
+      status,
+    ]
   );
 };
