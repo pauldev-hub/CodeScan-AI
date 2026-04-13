@@ -115,7 +115,7 @@ def generate_share_card(scan_id):
             get_ai_provider_service().generate_text(
                 user_prompt="Write a stakeholder-friendly score share card.",
                 system_prompt=prompt,
-                preferred_order=["groq", "gemini"],
+                preferred_order=["gemini", "groq", "cerebras"],
             )
         )
     except Exception:

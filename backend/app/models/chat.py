@@ -31,6 +31,7 @@ class ChatMessage(db.Model):
     __tablename__ = "chat_messages"
     __table_args__ = (
         db.CheckConstraint("role IN ('user', 'assistant')", name="ck_chat_messages_role"),
+        db.CheckConstraint("feedback IN ('like', 'dislike')", name="ck_chat_messages_feedback"),
         db.Index("idx_chat_messages_conversation_created", "conversation_id", "created_at"),
     )
 
@@ -43,6 +44,7 @@ class ChatMessage(db.Model):
     )
     role = db.Column(db.String(10), nullable=False)
     content = db.Column(db.Text, nullable=False)
+    feedback = db.Column(db.String(10), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     conversation = db.relationship("ChatConversation", back_populates="messages")

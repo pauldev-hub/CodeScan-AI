@@ -7,6 +7,8 @@ import os
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,9 +24,27 @@ class AIProviderConfig:
             "retry_count": 3,
             "api_key_env": "GROQ_API_KEY",
         },
+        "cerebras": {
+            "name": "Cerebras",
+            "model": os.getenv("CEREBRAS_MODEL", "llama3.1-8b"),
+            "max_tokens": 8192,
+            "timeout": 30,
+            "retry_count": 3,
+            "api_key_env": "CEREBRAS_API_KEY",
+            "available_models": [
+                {
+                    "id": "llama3.1-8b",
+                    "best_for": "Fast responses, chat, simple tasks",
+                },
+                {
+                    "id": "qwen-3-235b-a22b-instruct-2507",
+                    "best_for": "Complex reasoning, long context (65k tokens), slower",
+                },
+            ],
+        },
         "gemini": {
             "name": "Google Gemini",
-            "model": os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
+            "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             "max_tokens": 8192,
             "timeout": 35,
             "retry_count": 2,
@@ -41,9 +61,10 @@ class AIProviderConfig:
     }
 
     TEMPERATURE = 0.2  # Low creativity for deterministic responses
-    DEFAULT_PROVIDER_ORDER = ["groq", "gemini", "llama"]
+    DEFAULT_PROVIDER_ORDER = ["gemini", "groq", "cerebras", "llama"]
     RETRY_BACKOFF_BASE = {
         "groq": 1,
+        "cerebras": 1,
         "gemini": 2,
         "llama": 2,
     }
@@ -60,6 +81,10 @@ class AIProviderService:
         self.groq_client = None
         self.genai_client = None
         self.hf_client = None
+        self.groq_api_key = None
+        self.cerebras_api_key = None
+        self.gemini_api_key = None
+        self.hf_api_key = None
         self.provider_order = self._get_provider_order()
         self._init_providers()
         logger.info(
@@ -70,33 +95,48 @@ class AIProviderService:
 
     def _init_providers(self):
         """Initialize all available provider clients."""
-        groq_key = os.getenv("GROQ_API_KEY")
-        if groq_key:
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        if self.groq_api_key:
             try:
                 groq_module = importlib.import_module("groq")
-                self.groq_client = groq_module.Groq(api_key=groq_key)
+                self.groq_client = groq_module.Groq(api_key=self.groq_api_key)
                 logger.info("Groq client initialized")
             except Exception as exc:
-                logger.warning("Groq client disabled due to initialization error: %s", exc)
+                logger.warning(
+                    "Groq SDK client unavailable, HTTP fallback will be used: %s",
+                    exc,
+                )
 
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        if gemini_key:
+        self.cerebras_api_key = os.getenv("CEREBRAS_API_KEY")
+
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY")
+        if self.gemini_api_key:
             try:
                 genai_module = importlib.import_module("google.generativeai")
-                genai_module.configure(api_key=gemini_key)
+                genai_module.configure(api_key=self.gemini_api_key)
                 self.genai_client = genai_module
                 logger.info("Google Gemini client initialized")
             except Exception as exc:
-                logger.warning("Gemini client disabled due to initialization error: %s", exc)
+                logger.warning(
+                    "Gemini SDK client unavailable, HTTP fallback will be used: %s",
+                    exc,
+                )
 
-        hf_key = os.getenv("HUGGING_FACE_API_KEY")
-        if hf_key:
+        self.hf_api_key = os.getenv("HUGGING_FACE_API_KEY")
+        if self.hf_api_key:
             try:
                 hf_module = importlib.import_module("huggingface_hub")
-                self.hf_client = hf_module.InferenceClient(api_key=hf_key)
+                # huggingface-hub versions differ across token/api_key kwargs
+                try:
+                    self.hf_client = hf_module.InferenceClient(token=self.hf_api_key)
+                except TypeError:
+                    self.hf_client = hf_module.InferenceClient(api_key=self.hf_api_key)
                 logger.info("Hugging Face Llama client initialized")
             except Exception as exc:
-                logger.warning("Hugging Face client disabled due to initialization error: %s", exc)
+                logger.warning(
+                    "Hugging Face SDK client unavailable, HTTP fallback will be used: %s",
+                    exc,
+                )
 
     def _list_available_providers(self) -> List[str]:
         """Return a list of configured providers with initialized clients."""
@@ -112,6 +152,9 @@ class AIProviderService:
                 "configured": self._is_provider_available(provider_name),
                 "model": AIProviderConfig.PROVIDERS[provider_name]["model"],
                 "name": AIProviderConfig.PROVIDERS[provider_name]["name"],
+                "available_models": AIProviderConfig.PROVIDERS[provider_name].get(
+                    "available_models", []
+                ),
             }
             for provider_name in AIProviderConfig.PROVIDERS
         }
@@ -119,11 +162,13 @@ class AIProviderService:
     def _is_provider_available(self, provider_name: str) -> bool:
         """Check if a provider client is initialized and available for use."""
         if provider_name == "groq":
-            return self.groq_client is not None
+            return bool(self.groq_api_key)
+        if provider_name == "cerebras":
+            return bool(self.cerebras_api_key)
         if provider_name == "gemini":
-            return self.genai_client is not None
+            return bool(self.gemini_api_key)
         if provider_name == "llama":
-            return self.hf_client is not None
+            return bool(self.hf_api_key)
         return False
 
     def _get_provider_order(self) -> List[str]:
@@ -253,6 +298,12 @@ class AIProviderService:
             try:
                 if provider_name == "groq":
                     text = await self._call_groq_text(user_prompt, system_prompt, timeout)
+                elif provider_name == "cerebras":
+                    text = await self._call_cerebras_text(
+                        user_prompt,
+                        system_prompt,
+                        timeout,
+                    )
                 elif provider_name == "gemini":
                     text = await self._call_gemini_text(user_prompt, system_prompt, timeout)
                 elif provider_name == "llama":
@@ -280,7 +331,7 @@ class AIProviderService:
         Call a provider with provider-specific retry and backoff.
 
         Args:
-            provider_name: Name of provider (groq, gemini, llama)
+            provider_name: Name of provider (groq, cerebras, gemini, llama)
             code_chunk: Code to analyze
             system_prompt: System prompt
             scan_id: Optional scan ID for logging
@@ -367,6 +418,7 @@ class AIProviderService:
         timeout = config["timeout"]
         provider_callers = {
             "groq": self._call_groq,
+            "cerebras": self._call_cerebras,
             "gemini": self._call_gemini,
             "llama": self._call_llama,
         }
@@ -385,59 +437,87 @@ class AIProviderService:
         self, code_chunk: str, system_prompt: str, timeout: int
     ) -> Dict:
         """Call Groq API with timeout."""
-        if not self.groq_client:
+        if not self.groq_api_key:
             raise ValueError("Groq API key not configured")
 
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                self.groq_client.chat.completions.create,
-                model=AIProviderConfig.PROVIDERS["groq"]["model"],
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": code_chunk},
-                ],
-                temperature=AIProviderConfig.TEMPERATURE,
-                max_tokens=AIProviderConfig.PROVIDERS["groq"]["max_tokens"],
-            ),
+        if self.groq_client:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.groq_client.chat.completions.create,
+                    model=AIProviderConfig.PROVIDERS["groq"]["model"],
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": code_chunk},
+                    ],
+                    temperature=AIProviderConfig.TEMPERATURE,
+                    max_tokens=AIProviderConfig.PROVIDERS["groq"]["max_tokens"],
+                ),
+                timeout=timeout,
+            )
+
+            try:
+                response_text = response.choices[0].message.content
+            except (AttributeError, IndexError, TypeError) as exc:
+                raise AIProviderResponseError(
+                    f"Groq returned unexpected response format: {exc}"
+                ) from exc
+        else:
+            response_text = await self._call_groq_http(
+                code_chunk=code_chunk,
+                system_prompt=system_prompt,
+                timeout=timeout,
+            )
+
+        return self._parse_response(response_text)
+
+    async def _call_cerebras(
+        self, code_chunk: str, system_prompt: str, timeout: int
+    ) -> Dict:
+        """Call Cerebras API with timeout."""
+        if not self.cerebras_api_key:
+            raise ValueError("Cerebras API key not configured")
+
+        response_text = await self._call_cerebras_http(
+            user_input=code_chunk,
+            system_prompt=system_prompt,
             timeout=timeout,
         )
-
-        try:
-            response_text = response.choices[0].message.content
-        except (AttributeError, IndexError, TypeError) as exc:
-            raise AIProviderResponseError(
-                f"Groq returned unexpected response format: {exc}"
-            ) from exc
-
         return self._parse_response(response_text)
 
     async def _call_gemini(
         self, code_chunk: str, system_prompt: str, timeout: int
     ) -> Dict:
         """Call Google Gemini API with timeout."""
-        if not self.genai_client:
+        if not self.gemini_api_key:
             raise ValueError("Gemini API key not configured")
 
-        model = self.genai_client.GenerativeModel(
-            AIProviderConfig.PROVIDERS["gemini"]["model"]
-        )
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                model.generate_content,
-                f"{system_prompt}\n\n{code_chunk}",
-                generation_config={
-                    "temperature": AIProviderConfig.TEMPERATURE,
-                    "max_output_tokens": AIProviderConfig.PROVIDERS["gemini"][
-                        "max_tokens"
-                    ],
-                },
-            ),
-            timeout=timeout,
-        )
+        if self.genai_client:
+            model = self.genai_client.GenerativeModel(
+                AIProviderConfig.PROVIDERS["gemini"]["model"]
+            )
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    model.generate_content,
+                    f"{system_prompt}\n\n{code_chunk}",
+                    generation_config={
+                        "temperature": AIProviderConfig.TEMPERATURE,
+                        "max_output_tokens": AIProviderConfig.PROVIDERS["gemini"][
+                            "max_tokens"
+                        ],
+                    },
+                ),
+                timeout=timeout,
+            )
 
-        response_text = getattr(response, "text", None)
-        if not response_text:
-            raise AIProviderResponseError("Gemini returned empty response text")
+            response_text = getattr(response, "text", None)
+            if not response_text:
+                raise AIProviderResponseError("Gemini returned empty response text")
+        else:
+            response_text = await self._call_gemini_http(
+                user_input=code_chunk,
+                system_prompt=system_prompt,
+                timeout=timeout,
+            )
 
         return self._parse_response(response_text)
 
@@ -445,81 +525,267 @@ class AIProviderService:
         self, code_chunk: str, system_prompt: str, timeout: int
     ) -> Dict:
         """Call Llama via Hugging Face API with timeout."""
-        if not self.hf_client:
+        if not self.hf_api_key:
             raise ValueError("Hugging Face API key not configured")
 
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                self.hf_client.text_generation,
-                f"{system_prompt}\n\n{code_chunk}",
-                model=AIProviderConfig.PROVIDERS["llama"]["model"],
-                max_new_tokens=AIProviderConfig.PROVIDERS["llama"]["max_tokens"],
-                temperature=AIProviderConfig.TEMPERATURE,
-            ),
-            timeout=timeout,
-        )
+        if self.hf_client:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.hf_client.text_generation,
+                    f"{system_prompt}\n\n{code_chunk}",
+                    model=AIProviderConfig.PROVIDERS["llama"]["model"],
+                    max_new_tokens=AIProviderConfig.PROVIDERS["llama"]["max_tokens"],
+                    temperature=AIProviderConfig.TEMPERATURE,
+                ),
+                timeout=timeout,
+            )
 
-        response_text = response if isinstance(response, str) else str(response)
-        if not response_text.strip():
-            raise AIProviderResponseError("Llama returned empty response text")
+            response_text = response if isinstance(response, str) else str(response)
+            if not response_text.strip():
+                raise AIProviderResponseError("Llama returned empty response text")
+        else:
+            response_text = await self._call_llama_http(
+                prompt=f"{system_prompt}\n\n{code_chunk}",
+                timeout=timeout,
+            )
 
         return self._parse_response(response_text)
 
     async def _call_groq_text(self, user_prompt: str, system_prompt: str, timeout: int) -> str:
-        if not self.groq_client:
+        if not self.groq_api_key:
             raise ValueError("Groq API key not configured")
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                self.groq_client.chat.completions.create,
-                model=AIProviderConfig.PROVIDERS["groq"]["model"],
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.35,
-                max_tokens=AIProviderConfig.PROVIDERS["groq"]["max_tokens"],
-            ),
+        if self.groq_client:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.groq_client.chat.completions.create,
+                    model=AIProviderConfig.PROVIDERS["groq"]["model"],
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.35,
+                    max_tokens=AIProviderConfig.PROVIDERS["groq"]["max_tokens"],
+                ),
+                timeout=timeout,
+            )
+            try:
+                return response.choices[0].message.content or ""
+            except (AttributeError, IndexError, TypeError) as exc:
+                raise AIProviderResponseError(f"Groq returned unexpected text format: {exc}") from exc
+        return await self._call_groq_http(
+            code_chunk=user_prompt,
+            system_prompt=system_prompt,
             timeout=timeout,
         )
-        try:
-            return response.choices[0].message.content or ""
-        except (AttributeError, IndexError, TypeError) as exc:
-            raise AIProviderResponseError(f"Groq returned unexpected text format: {exc}") from exc
 
     async def _call_gemini_text(self, user_prompt: str, system_prompt: str, timeout: int) -> str:
-        if not self.genai_client:
+        if not self.gemini_api_key:
             raise ValueError("Gemini API key not configured")
-        model = self.genai_client.GenerativeModel(AIProviderConfig.PROVIDERS["gemini"]["model"])
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                model.generate_content,
-                f"{system_prompt}\n\n{user_prompt}",
-                generation_config={
-                    "temperature": 0.35,
-                    "max_output_tokens": AIProviderConfig.PROVIDERS["gemini"]["max_tokens"],
-                },
-            ),
+        if self.genai_client:
+            model = self.genai_client.GenerativeModel(AIProviderConfig.PROVIDERS["gemini"]["model"])
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    model.generate_content,
+                    f"{system_prompt}\n\n{user_prompt}",
+                    generation_config={
+                        "temperature": 0.35,
+                        "max_output_tokens": AIProviderConfig.PROVIDERS["gemini"]["max_tokens"],
+                    },
+                ),
+                timeout=timeout,
+            )
+            response_text = getattr(response, "text", None)
+            if not response_text:
+                raise AIProviderResponseError("Gemini returned empty response text")
+            return response_text
+        return await self._call_gemini_http(
+            user_input=user_prompt,
+            system_prompt=system_prompt,
             timeout=timeout,
         )
-        response_text = getattr(response, "text", None)
-        if not response_text:
-            raise AIProviderResponseError("Gemini returned empty response text")
-        return response_text
+
+    async def _call_cerebras_text(self, user_prompt: str, system_prompt: str, timeout: int) -> str:
+        if not self.cerebras_api_key:
+            raise ValueError("Cerebras API key not configured")
+        return await self._call_cerebras_http(
+            user_input=user_prompt,
+            system_prompt=system_prompt,
+            timeout=timeout,
+            temperature=0.35,
+        )
 
     async def _call_llama_text(self, user_prompt: str, system_prompt: str, timeout: int) -> str:
-        if not self.hf_client:
+        if not self.hf_api_key:
             raise ValueError("Hugging Face API key not configured")
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                self.hf_client.text_generation,
-                f"{system_prompt}\n\n{user_prompt}",
-                model=AIProviderConfig.PROVIDERS["llama"]["model"],
-                max_new_tokens=AIProviderConfig.PROVIDERS["llama"]["max_tokens"],
-                temperature=0.35,
-            ),
+        if self.hf_client:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.hf_client.text_generation,
+                    f"{system_prompt}\n\n{user_prompt}",
+                    model=AIProviderConfig.PROVIDERS["llama"]["model"],
+                    max_new_tokens=AIProviderConfig.PROVIDERS["llama"]["max_tokens"],
+                    temperature=0.35,
+                ),
+                timeout=timeout,
+            )
+            return response if isinstance(response, str) else str(response)
+        return await self._call_llama_http(
+            prompt=f"{system_prompt}\n\n{user_prompt}",
             timeout=timeout,
         )
-        return response if isinstance(response, str) else str(response)
+
+    async def _call_groq_http(self, code_chunk: str, system_prompt: str, timeout: int) -> str:
+        """Call Groq chat completions over raw HTTP as SDK fallback."""
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        payload = {
+            "model": AIProviderConfig.PROVIDERS["groq"]["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": code_chunk},
+            ],
+            "temperature": AIProviderConfig.TEMPERATURE,
+            "max_tokens": AIProviderConfig.PROVIDERS["groq"]["max_tokens"],
+        }
+        headers = {
+            "Authorization": f"Bearer {self.groq_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        def _request_once() -> str:
+            response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            if response.status_code >= 400:
+                raise AIProviderError(
+                    f"Groq HTTP {response.status_code}: {response.text[:300]}"
+                )
+            data = response.json()
+            choices = data.get("choices") or []
+            if not choices:
+                raise AIProviderResponseError("Groq HTTP response missing choices")
+            message = (choices[0] or {}).get("message") or {}
+            content = message.get("content")
+            if not content:
+                raise AIProviderResponseError("Groq HTTP response missing content")
+            return str(content)
+
+        return await asyncio.wait_for(asyncio.to_thread(_request_once), timeout=timeout)
+
+    async def _call_gemini_http(self, user_input: str, system_prompt: str, timeout: int) -> str:
+        """Call Gemini over REST API as SDK fallback."""
+        model = AIProviderConfig.PROVIDERS["gemini"]["model"]
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            f"?key={self.gemini_api_key}"
+        )
+        payload = {
+            "contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_input}"}]}],
+            "generationConfig": {
+                "temperature": AIProviderConfig.TEMPERATURE,
+                "maxOutputTokens": AIProviderConfig.PROVIDERS["gemini"]["max_tokens"],
+            },
+        }
+
+        def _request_once() -> str:
+            response = requests.post(url, json=payload, timeout=timeout)
+            if response.status_code >= 400:
+                raise AIProviderError(
+                    f"Gemini HTTP {response.status_code}: {response.text[:300]}"
+                )
+            data = response.json()
+            candidates = data.get("candidates") or []
+            if not candidates:
+                raise AIProviderResponseError("Gemini HTTP response missing candidates")
+            first_candidate = candidates[0] or {}
+            content = first_candidate.get("content") or {}
+            parts = content.get("parts") or []
+            text = (parts[0] or {}).get("text") if parts else None
+            if not text:
+                raise AIProviderResponseError("Gemini HTTP response missing text")
+            return str(text)
+
+        return await asyncio.wait_for(asyncio.to_thread(_request_once), timeout=timeout)
+
+    async def _call_cerebras_http(
+        self,
+        user_input: str,
+        system_prompt: str,
+        timeout: int,
+        temperature: Optional[float] = None,
+    ) -> str:
+        """Call Cerebras chat completions over HTTP."""
+        url = "https://api.cerebras.ai/v1/chat/completions"
+        payload = {
+            "model": AIProviderConfig.PROVIDERS["cerebras"]["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_input},
+            ],
+            "temperature": (
+                AIProviderConfig.TEMPERATURE if temperature is None else temperature
+            ),
+            "max_tokens": AIProviderConfig.PROVIDERS["cerebras"]["max_tokens"],
+        }
+        headers = {
+            "Authorization": f"Bearer {self.cerebras_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        def _request_once() -> str:
+            response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            if response.status_code >= 400:
+                raise AIProviderError(
+                    f"Cerebras HTTP {response.status_code}: {response.text[:300]}"
+                )
+            data = response.json()
+            choices = data.get("choices") or []
+            if not choices:
+                raise AIProviderResponseError("Cerebras HTTP response missing choices")
+            message = (choices[0] or {}).get("message") or {}
+            content = message.get("content")
+            if not content:
+                raise AIProviderResponseError("Cerebras HTTP response missing content")
+            return str(content)
+
+        return await asyncio.wait_for(asyncio.to_thread(_request_once), timeout=timeout)
+
+    async def _call_llama_http(self, prompt: str, timeout: int) -> str:
+        """Call Hugging Face Inference API over HTTP as SDK fallback."""
+        model = AIProviderConfig.PROVIDERS["llama"]["model"]
+        url = f"https://router.huggingface.co/hf-inference/models/{model}"
+        headers = {
+            "Authorization": f"Bearer {self.hf_api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": AIProviderConfig.PROVIDERS["llama"]["max_tokens"],
+                "temperature": AIProviderConfig.TEMPERATURE,
+            },
+        }
+
+        def _request_once() -> str:
+            response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            if response.status_code >= 400:
+                raise AIProviderError(
+                    f"HuggingFace HTTP {response.status_code}: {response.text[:300]}"
+                )
+            data = response.json()
+            if isinstance(data, dict) and isinstance(data.get("choices"), list) and data["choices"]:
+                message = (data["choices"][0] or {}).get("message") or {}
+                content = message.get("content")
+                if content:
+                    return str(content)
+            if isinstance(data, list) and data:
+                generated = data[0].get("generated_text")
+                if generated:
+                    return str(generated)
+            if isinstance(data, dict):
+                generated = data.get("generated_text")
+                if generated:
+                    return str(generated)
+            raise AIProviderResponseError("HuggingFace HTTP response missing generated_text")
+
+        return await asyncio.wait_for(asyncio.to_thread(_request_once), timeout=timeout)
 
     @staticmethod
     def _parse_response(response_text: str) -> Dict:

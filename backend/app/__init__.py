@@ -12,6 +12,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
+from app.utils.responses import error_response
 from app.utils.security import is_token_blacklisted
 
 
@@ -162,6 +163,22 @@ def create_app(config_name=None):
     @jwt.token_in_blocklist_loader
     def check_if_token_revoked(_jwt_header, jwt_payload):
         return is_token_blacklisted(jwt_payload.get("jti"))
+
+    @jwt.invalid_token_loader
+    def invalid_token_callback(_reason):
+        return error_response("Invalid access token", "unauthorized", 401)
+
+    @jwt.unauthorized_loader
+    def missing_token_callback(_reason):
+        return error_response("Authentication token required", "unauthorized", 401)
+
+    @jwt.expired_token_loader
+    def expired_token_callback(_jwt_header, _jwt_payload):
+        return error_response("Access token expired", "unauthorized", 401)
+
+    @jwt.revoked_token_loader
+    def revoked_token_callback(_jwt_header, _jwt_payload):
+        return error_response("Session revoked. Please login again.", "unauthorized", 401)
 
     register_error_handlers(app)
     register_routes(app)
