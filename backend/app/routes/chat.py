@@ -74,3 +74,28 @@ def get_messages(conversation_id):
             "total": pagination.total,
         }
     )
+
+
+@chat_bp.patch("/conversations/<int:conversation_id>/messages/<int:message_id>/feedback")
+@jwt_required()
+def set_message_feedback(conversation_id, message_id):
+    user_id = int(get_jwt_identity())
+    payload = request.get_json(silent=True) or {}
+    feedback = payload.get("feedback")
+
+    if feedback == "":
+        feedback = None
+
+    if feedback not in {None, "like", "dislike"}:
+        return error_response("feedback must be one of: like, dislike, null", "validation_error", 400)
+
+    message = ChatService.set_message_feedback(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+        feedback=feedback,
+    )
+    if not message:
+        return error_response("Message not found", "not_found", 404)
+
+    return success_response({"message": ChatService.serialize_message(message)})
