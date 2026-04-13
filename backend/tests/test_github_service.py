@@ -35,6 +35,12 @@ class _FakeRepo:
             return self.root
         if path == "src":
             return self.src
+        if path == "src/app.py":
+            return self.src[0]
+        if path == "src/ignore.txt":
+            return self.src[1]
+        if path == "src/main.js":
+            return self.src[2]
         return []
 
 
@@ -58,3 +64,14 @@ def test_fetch_repository_snapshot_scans_source_files_not_readme_only():
     assert "# File: src/app.py" in snapshot["content"]
     assert "# File: src/main.js" in snapshot["content"]
     assert "README.md" not in snapshot["content"]
+
+
+def test_preview_repository_returns_tree_and_summary():
+    service = GitHubService()
+    service.client = _FakeClient()
+
+    preview = service.preview_repository("https://github.com/octocat/Hello-World")
+
+    assert preview["repo"] == "octocat/Hello-World"
+    assert preview["summary"]["supported_file_count"] == 2
+    assert preview["tree"][0]["name"] == "src"

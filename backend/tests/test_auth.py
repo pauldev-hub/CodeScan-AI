@@ -99,6 +99,19 @@ def test_login_invalid_password(mock_rate_limit, app_instance, client):
 
 
 @patch("app.routes.auth.enforce_rate_limit", return_value=True)
+def test_guest_login_success(mock_rate_limit, client):
+    del mock_rate_limit
+
+    response = client.post("/api/auth/guest", json={})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["user"]["email"] == "guest@codescan.local"
+    assert payload["access_token"]
+    assert payload["refresh_token"]
+
+
+@patch("app.routes.auth.enforce_rate_limit", return_value=True)
 def test_refresh_token_revoked_after_logout(mock_rate_limit, app_instance, client):
     del mock_rate_limit
     _create_user(app_instance, email="logout@example.com", password="Password123")

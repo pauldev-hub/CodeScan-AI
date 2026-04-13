@@ -8,6 +8,7 @@ from app.utils.constants import SCAN_STATUS_COMPLETE
 
 def test_submit_url_scan_enqueue_failure_returns_503(client, auth_headers):
     headers, _user = auth_headers(email="scan-enqueue@example.com")
+    client.application.config["SCAN_INLINE_FALLBACK_ON_QUEUE_FAILURE"] = False
 
     with patch("app.routes.scan.enforce_rate_limit", return_value=True), patch(
         "app.routes.scan.process_scan_task.delay", side_effect=RuntimeError("broker down")
@@ -71,6 +72,22 @@ def test_submit_url_scan_accepted_with_task_id(client, auth_headers):
     assert payload["queue_mode"] == "celery"
 
 
+def test_preview_url_scan_returns_repo_tree(client, auth_headers):
+    headers, _user = auth_headers(email="scan-preview@example.com")
+
+    with patch("app.routes.scan.GitHubService.preview_repository", return_value={"repo": "octocat/Hello-World", "tree": [], "summary": {"supported_file_count": 4}}):
+        response = client.post(
+            "/api/scan/url/preview",
+            json={"github_url": "https://github.com/octocat/Hello-World"},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["repo"] == "octocat/Hello-World"
+    assert payload["summary"]["supported_file_count"] == 4
+
+
 def test_results_include_summary_arrays(client, auth_headers):
     headers, user_id = auth_headers(email="scan-results@example.com")
 
@@ -114,6 +131,26 @@ def test_submit_paste_scan_persists_input_language(client, auth_headers):
         response = client.post(
             "/api/scan/paste",
             json={"code": "print('hi')", "language": "python"},
+            headers=headers,
+        )
+
+    assert response.status_code == 202
+    scan = Scan.query.order_by(Scan.id.desc()).first()
+    assert scan.input_language == "python"
+
+
+def test_submit_paste_scan_auto_detects_language_when_missing(client, auth_headers):
+    headers, _user = auth_headers(email="scan-language-auto@example.com")
+
+    class DummyTask:
+        id = "task-paste-auto-123"
+
+    with patch("app.routes.scan.enforce_rate_limit", return_value=True), patch(
+        "app.routes.scan.process_scan_task.delay", return_value=DummyTask()
+    ):
+        response = client.post(
+            "/api/scan/paste",
+            json={"code": "def hello():\n    return 'hi'\n"},
             headers=headers,
         )
 
