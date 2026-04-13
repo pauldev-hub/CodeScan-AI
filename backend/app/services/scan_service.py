@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import tomllib
 import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -35,6 +36,26 @@ logger = logging.getLogger(__name__)
 
 
 class ScanService:
+    MANIFEST_FILENAMES = {
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "requirements.txt",
+        "pyproject.toml",
+        "poetry.lock",
+        "pipfile",
+        "pipfile.lock",
+        "cargo.toml",
+        "cargo.lock",
+        "go.mod",
+        "go.sum",
+        "pom.xml",
+        "composer.json",
+        "gemfile",
+        "gemfile.lock",
+    }
+
     @staticmethod
     def create_scan(user_id, input_type, input_value, file_count=None, code_size_bytes=None, input_language=None):
         scan = Scan(
@@ -51,6 +72,20 @@ class ScanService:
         db.session.add(scan)
         db.session.commit()
         return scan
+
+    @staticmethod
+    def serialize_scan_input(payload: object) -> str:
+        if isinstance(payload, str):
+            return payload
+        return json.dumps(payload or {})
+
+    @staticmethod
+    def serialize_datetime(value: Optional[datetime]) -> Optional[str]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
 
     @staticmethod
     def get_scan_by_api_id(user_id, api_scan_id):
@@ -87,6 +122,7 @@ class ScanService:
 
         try:
             source_text = ScanService._resolve_scan_input(scan)
+            scan.input_language = ScanService.detect_language_for_scan(scan, source_text)
             analysis = ScanService._analyze_with_cache(scan, source_text)
             ScanService._persist_analysis(scan, analysis)
             provider_used = analysis.get("provider_used")
@@ -131,17 +167,180 @@ class ScanService:
             return scan.input_value or ""
 
         if scan.input_type == "url":
+            payload = ScanService._parse_url_scan_input(scan.input_value)
             github_service = GitHubService(token=os.getenv("GITHUB_TOKEN"))
-            snapshot = github_service.fetch_repository_snapshot(scan.input_value)
+            snapshot = github_service.fetch_repository_snapshot(
+                payload["github_url"],
+                selected_paths=payload["selected_paths"],
+            )
+            scan.file_count = snapshot.get("file_count")
+            scan.code_size_bytes = snapshot.get("total_bytes")
             return snapshot["content"]
 
         return scan.input_value or ""
 
     @staticmethod
+    def _parse_url_scan_input(raw_value: Optional[str]) -> Dict[str, object]:
+        text = str(raw_value or "").strip()
+        if not text:
+            return {"github_url": "", "selected_paths": [], "scan_entire": True}
+
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return {"github_url": text, "selected_paths": [], "scan_entire": True}
+
+        if not isinstance(parsed, dict):
+            return {"github_url": text, "selected_paths": [], "scan_entire": True}
+
+        github_url = str(parsed.get("github_url") or "").strip()
+        selected_paths = [
+            str(item or "").strip().strip("/")
+            for item in (parsed.get("selected_paths") or [])
+            if str(item or "").strip()
+        ]
+        scan_entire = bool(parsed.get("scan_entire", not selected_paths))
+        return {
+            "github_url": github_url,
+            "selected_paths": [] if scan_entire else selected_paths,
+            "scan_entire": scan_entire,
+        }
+
+    @staticmethod
     def normalize_language(raw_language: Optional[str]) -> str:
         normalized = str(raw_language or "").strip().lower()
-        aliases = {"py": "python", "js": "javascript", "ts": "typescript", "tsx": "typescript", "golang": "go"}
+        aliases = {
+            "py": "python",
+            "js": "javascript",
+            "ts": "typescript",
+            "tsx": "typescript",
+            "golang": "go",
+            "node": "javascript",
+            "c#": "csharp",
+            "cs": "csharp",
+            "rb": "ruby",
+            "auto": "text",
+        }
         return aliases.get(normalized, normalized or "text")
+
+    @staticmethod
+    def detect_language_from_filename(filename: Optional[str]) -> str:
+        lowered = os.path.basename(str(filename or "").strip()).lower()
+        extension = os.path.splitext(lowered)[1]
+        explicit = {
+            ".py": "python",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".java": "java",
+            ".go": "go",
+            ".rs": "rust",
+            ".rb": "ruby",
+            ".php": "php",
+            ".cs": "csharp",
+            ".cpp": "cpp",
+            ".json": "json",
+            ".yml": "yaml",
+            ".yaml": "yaml",
+            ".toml": "toml",
+            ".sql": "sql",
+            ".html": "html",
+            ".css": "css",
+        }
+        named = {
+            "package.json": "javascript",
+            "package-lock.json": "javascript",
+            "pnpm-lock.yaml": "javascript",
+            "yarn.lock": "javascript",
+            "requirements.txt": "python",
+            "pyproject.toml": "python",
+            "poetry.lock": "python",
+            "pipfile": "python",
+            "pipfile.lock": "python",
+            "cargo.toml": "rust",
+            "cargo.lock": "rust",
+            "go.mod": "go",
+            "go.sum": "go",
+            "pom.xml": "java",
+            "composer.json": "php",
+            "gemfile": "ruby",
+            "gemfile.lock": "ruby",
+        }
+        return named.get(lowered, explicit.get(extension, "text"))
+
+    @staticmethod
+    def detect_language(source_text: str, filename: Optional[str] = None) -> str:
+        filename_language = ScanService.detect_language_from_filename(filename)
+        if filename_language != "text":
+            return filename_language
+
+        text = str(source_text or "")
+        lowered = text.lower()
+        heuristics = [
+            ("python", ["def ", "import ", "from ", "if __name__ == '__main__':", "elif "]),
+            ("javascript", ["const ", "let ", "=>", "console.log", "function ", "module.exports"]),
+            ("typescript", ["interface ", "type ", ": string", ": number", "implements "]),
+            ("java", ["public class ", "system.out.println", "public static void main"]),
+            ("go", ["package main", "func main()", "fmt.", "import ("]),
+            ("rust", ["fn main()", "println!", "let mut ", "impl "]),
+            ("php", ["<?php", "echo ", "$_post", "$_get"]),
+            ("csharp", ["using system", "namespace ", "public class ", "console.writeline"]),
+            ("sql", ["select ", "insert into ", "update ", "delete from "]),
+            ("html", ["<!doctype html", "<html", "<div", "<body"]),
+            ("css", ["{", "}", "color:", "display:", "@media"]),
+            ("json", ['"{', '":', '"dependencies"', '"name"']),
+        ]
+        scores = Counter()
+        for language, tokens in heuristics:
+            for token in tokens:
+                if token in lowered:
+                    scores[language] += 1
+        return scores.most_common(1)[0][0] if scores else "text"
+
+    @staticmethod
+    def _split_source_files(source_text: str) -> List[Dict[str, str]]:
+        text = str(source_text or "")
+        if "# File:" not in text:
+            return [{"path": "snippet", "content": text.strip()}]
+
+        chunks = re.split(r"\n# File: ", text)
+        files = []
+        for index, chunk in enumerate(chunks):
+            if index == 0 and not chunk.strip():
+                continue
+            if index == 0 and "# File:" not in text:
+                continue
+            if "\n" not in chunk:
+                path = chunk.strip()
+                content = ""
+            else:
+                path, content = chunk.split("\n", 1)
+            files.append({"path": path.strip(), "content": content.strip()})
+        return [item for item in files if item["path"]]
+
+    @staticmethod
+    def detect_language_for_scan(scan: Scan, source_text: str) -> str:
+        current = ScanService.normalize_language(getattr(scan, "input_language", None))
+        if current != "text":
+            return current
+
+        url_payload = ScanService._parse_url_scan_input(scan.input_value) if scan.input_type == "url" else None
+        split_files = ScanService._split_source_files(source_text)
+        candidates = Counter()
+        for item in split_files:
+            language = ScanService.detect_language(item["content"], item["path"])
+            if language != "text":
+                candidates[language] += 1
+        if url_payload and url_payload["selected_paths"]:
+            for path in url_payload["selected_paths"]:
+                language = ScanService.detect_language_from_filename(path)
+                if language != "text":
+                    candidates[language] += 1
+
+        if candidates:
+            return candidates.most_common(1)[0][0]
+        return ScanService.detect_language(source_text)
 
     @staticmethod
     def _analyze_with_cache(scan, source_text):
@@ -338,6 +537,9 @@ class ScanService:
     def build_fix_preview(scan, finding, override_suggestion=None):
         suggestion = (override_suggestion or finding.fix_suggestion or "").strip()
         before = (finding.code_snippet or "").strip("\n")
+        if not before:
+            source_text = ScanService._resolve_scan_input(scan)
+            before = ScanService._derive_finding_snippet(source_text, finding)
         language = ScanService.normalize_language(scan.input_language)
         preview_language = language if language != "text" else ScanService._guess_snippet_language(before)
         change_summary, rationale, edit_hints = ScanService._build_fix_guidance(
@@ -383,9 +585,41 @@ class ScanService:
         }
 
     @staticmethod
+    def _derive_finding_snippet(source_text: str, finding) -> str:
+        text = source_text or ""
+        title = str(getattr(finding, "title", "") or "").lower()
+        description = str(getattr(finding, "description", "") or "").lower()
+        combined = f"{title} {description}"
+
+        pattern_sets = [
+            (["sql", "injection", "query", "select"], ["select", "execute(", "cursor.execute", "where", "query"]),
+            (["xss", "cross-site", "script"], ["<script", "innerhtml", "dangerouslysetinnerhtml", "request.args", "return f\"<"]),
+            (["pickle", "deserialize", "deserialization"], ["pickle.loads", "pickle.load", "yaml.load", "deserialize"]),
+            (["secret", "password", "token", "credential", "hardcoded"], ["secret", "password", "token", "api_key", "app.secret_key"]),
+            (["command", "subprocess", "shell"], ["subprocess", "shell=true", "os.system", "exec(", "eval("])
+        ]
+
+        for keywords, patterns in pattern_sets:
+            if not any(keyword in combined for keyword in keywords):
+                continue
+            for pattern in patterns:
+                snippet = ScanService._snippet_for_pattern(text, pattern, window=320)
+                if snippet and snippet.strip():
+                    return snippet
+
+        file_path = str(getattr(finding, "file_path", "") or "")
+        if file_path and file_path.lower() != "unknown":
+            snippet = ScanService._snippet_for_pattern(text, file_path, window=320)
+            if snippet and snippet.strip():
+                return snippet
+
+        fallback = (text or "").strip()
+        return fallback[:320] if fallback else ""
+
+    @staticmethod
     def build_results_payload(scan):
         source_text = ScanService._resolve_scan_input(scan)
-        input_language = ScanService.normalize_language(scan.input_language)
+        input_language = ScanService.detect_language_for_scan(scan, source_text)
         findings = [
             {
                 "id": finding.id,
@@ -414,6 +648,7 @@ class ScanService:
         map_tab = ScanService._build_map_tab(enriched, source_text)
         dependencies_tab = ScanService._build_dependencies_tab(source_text, enriched)
         learn_tab = ScanService._ensure_learn_content(scan, enriched, input_language)
+        source_overview = ScanService._build_source_overview(scan, source_text)
 
         return {
             "scan_id": scan.api_scan_id,
@@ -425,9 +660,9 @@ class ScanService:
             "code_size_bytes": scan.code_size_bytes,
             "queue_mode": scan.queue_mode,
             "provider_used": scan.ai_provider_used,
-            "created_at": scan.created_at.isoformat() if scan.created_at else None,
-            "started_at": scan.started_at.isoformat() if scan.started_at else None,
-            "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
+            "created_at": ScanService.serialize_datetime(scan.created_at),
+            "started_at": ScanService.serialize_datetime(scan.started_at),
+            "completed_at": ScanService.serialize_datetime(scan.completed_at),
             "findings": enriched,
             "summary": {
                 "total_findings": len(enriched),
@@ -442,6 +677,7 @@ class ScanService:
             "pros": ScanService._json_list_field(scan.pros_json),
             "cons": ScanService._json_list_field(scan.cons_json),
             "refactor_suggestions": ScanService._json_list_field(scan.refactor_suggestions_json),
+            "source_overview": source_overview,
             "tabs": {
                 "overview": overview,
                 "security": security_tab,
@@ -456,7 +692,7 @@ class ScanService:
     @staticmethod
     def regenerate_learn_content(scan):
         source_text = ScanService._resolve_scan_input(scan)
-        input_language = ScanService.normalize_language(scan.input_language)
+        input_language = ScanService.detect_language_for_scan(scan, source_text)
         findings = [
             {
                 "id": finding.id,
@@ -684,28 +920,27 @@ class ScanService:
 
     @staticmethod
     def _build_dependencies_tab(source_text: str, findings: List[Dict[str, object]]) -> Dict[str, object]:
-        dependency_rows = []
-        patterns = [
-            r"^([A-Za-z0-9_.-]+)==([0-9][^\s]*)$",
-            r"\"([A-Za-z0-9_.-]+)\"\s*:\s*\"([~^]?[0-9][^\"]*)\"",
-        ]
-        for pattern in patterns:
-            for match in re.finditer(pattern, source_text or "", flags=re.MULTILINE):
-                name, version = match.groups()
-                dependency_rows.append(
-                    {
-                        "name": name,
-                        "version": version,
-                        "severity": "high" if version.startswith(("0.", "1.")) else "medium",
-                        "fix_available": "Review the latest stable release",
-                    }
-                )
-        dependency_rows = dependency_rows[:10]
+        dependency_rows = ScanService._extract_dependency_rows(source_text)[:18]
+        findings_by_file = defaultdict(list)
+        for item in findings:
+            findings_by_file[item.get("file_path") or "snippet"].append(item)
+
+        file_findings = []
+        for file_path, file_items in list(findings_by_file.items())[:10]:
+            file_findings.append(
+                {
+                    "file_path": file_path,
+                    "issue_count": len(file_items),
+                    "top_issue": file_items[0]["title"],
+                    "fix_summary": file_items[0].get("fix_suggestion") or "Review the finding details and patch the unsafe path.",
+                    "severities": sorted({entry["severity"] for entry in file_items}),
+                }
+            )
 
         api_contract_gaps = [
             {
                 "endpoint": item.get("file_path") or "snippet",
-                "issue": "Response validation is not clearly enforced before the payload is used.",
+                "issue": item.get("fix_suggestion") or "Response validation is not clearly enforced before the payload is used.",
             }
             for item in findings
             if "validation" in item["description"].lower() or "api" in item["title"].lower()
@@ -713,15 +948,19 @@ class ScanService:
 
         return {
             "dependency_audit": dependency_rows,
+            "dependency_count": len(dependency_rows),
+            "manifest_count": len({row["manifest_path"] for row in dependency_rows if row.get("manifest_path")}),
             "insecure_chain": [
                 {
                     "package": row["name"],
-                    "attack_surface": f"{row['name']} expands the attack surface until it is reviewed and upgraded.",
+                    "attack_surface": f"{row['name']} should be reviewed because the current version can widen operational risk and drift.",
                 }
                 for row in dependency_rows[:5]
             ],
             "api_contract_gaps": api_contract_gaps,
             "outdated_packages": dependency_rows[:5],
+            "file_findings": file_findings,
+            "scanned_targets": [item["path"] for item in ScanService._split_source_files(source_text)[:12]],
         }
 
     @staticmethod
@@ -764,11 +1003,12 @@ class ScanService:
 
     @staticmethod
     def _ensure_learn_content(scan: Scan, findings: List[Dict[str, object]], input_language: str) -> Dict[str, object]:
+        fallback = ScanService._build_seeded_learn_tab(findings, input_language)
         if scan.learn_content_json:
             try:
                 parsed = json.loads(scan.learn_content_json)
                 if isinstance(parsed, dict):
-                    return parsed
+                    return ScanService._normalize_learn_tab(parsed, fallback)
             except (TypeError, ValueError):
                 pass
 
@@ -788,7 +1028,7 @@ class ScanService:
 
         prompt = (
             "You are generating a learn tab for a secure code scanning product.\n"
-            "Return ONLY JSON with keys micro_lessons, quiz, fix_it_yourself, debate_starters, generated_at, source.\n"
+            "Return ONLY JSON with keys micro_lessons, quiz, fix_it_yourself, debate_starters, hacker_challenges, code_roasts, live_attack_labs, generated_at, source.\n"
             "Each value except generated_at/source must be a list. Keep answers concise, beginner-safe, and grounded in the findings.\n"
             f"Language: {input_language}\n"
             f"Scan ID: {scan.api_scan_id}\n"
@@ -802,24 +1042,16 @@ class ScanService:
                 service.generate_text(
                     user_prompt="Generate learn content for this scan.",
                     system_prompt=prompt,
-                    preferred_order=["groq", "gemini"],
+                    preferred_order=["gemini", "groq", "cerebras"],
                 )
             )
             candidate = AIProviderService._extract_json_payload(raw_text)
             parsed = json.loads(candidate)
             if not isinstance(parsed, dict):
                 raise ValueError("Learn content payload must be an object")
-            learn_tab = {
-                "micro_lessons": parsed.get("micro_lessons") or fallback["micro_lessons"],
-                "quiz": parsed.get("quiz") or fallback["quiz"],
-                "fix_it_yourself": parsed.get("fix_it_yourself") or fallback["fix_it_yourself"],
-                "debate_starters": parsed.get("debate_starters") or fallback["debate_starters"],
-                "hacker_challenges": fallback["hacker_challenges"],
-                "code_roasts": fallback["code_roasts"],
-                "live_attack_labs": fallback["live_attack_labs"],
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "source": f"ai_generated:{provider_used}",
-            }
+            parsed["generated_at"] = datetime.now(timezone.utc).isoformat()
+            parsed["source"] = f"ai_generated:{provider_used}"
+            learn_tab = ScanService._normalize_learn_tab(parsed, fallback)
             return learn_tab
         except Exception:
             return {
@@ -827,6 +1059,35 @@ class ScanService:
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "source": "seeded",
             }
+
+    @staticmethod
+    def _safe_object_list(raw_value: object) -> List[Dict[str, object]]:
+        if not isinstance(raw_value, list):
+            return []
+        return [item for item in raw_value if isinstance(item, dict)]
+
+    @staticmethod
+    def _normalize_learn_tab(candidate: Dict[str, object], fallback: Dict[str, object]) -> Dict[str, object]:
+        micro_lessons = ScanService._safe_object_list(candidate.get("micro_lessons")) or fallback["micro_lessons"]
+        quiz = ScanService._safe_object_list(candidate.get("quiz")) or fallback["quiz"]
+        fix_it_yourself = ScanService._safe_object_list(candidate.get("fix_it_yourself")) or fallback["fix_it_yourself"]
+        debate_starters = ScanService._safe_object_list(candidate.get("debate_starters")) or fallback["debate_starters"]
+
+        hacker_challenges = ScanService._safe_object_list(candidate.get("hacker_challenges")) or fallback["hacker_challenges"]
+        code_roasts = ScanService._safe_object_list(candidate.get("code_roasts")) or fallback["code_roasts"]
+        live_attack_labs = ScanService._safe_object_list(candidate.get("live_attack_labs")) or fallback["live_attack_labs"]
+
+        return {
+            "micro_lessons": micro_lessons,
+            "quiz": quiz,
+            "fix_it_yourself": fix_it_yourself,
+            "debate_starters": debate_starters,
+            "hacker_challenges": hacker_challenges,
+            "code_roasts": code_roasts,
+            "live_attack_labs": live_attack_labs,
+            "generated_at": candidate.get("generated_at") or fallback.get("generated_at") or datetime.now(timezone.utc).isoformat(),
+            "source": candidate.get("source") or "seeded",
+        }
 
     @staticmethod
     def _build_seeded_learn_tab(findings: List[Dict[str, object]], input_language: str) -> Dict[str, object]:
@@ -903,6 +1164,212 @@ class ScanService:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": "seeded",
         }
+
+    @staticmethod
+    def _build_source_overview(scan: Scan, source_text: str) -> Dict[str, object]:
+        files = ScanService._split_source_files(source_text)
+        payload = ScanService._parse_url_scan_input(scan.input_value) if scan.input_type == "url" else None
+        dominant_languages = Counter(
+            ScanService.detect_language(item["content"], item["path"]) for item in files
+        )
+        if "text" in dominant_languages and len(dominant_languages) > 1:
+            del dominant_languages["text"]
+        return {
+            "input_type": scan.input_type,
+            "selected_paths": payload["selected_paths"] if payload else [],
+            "scan_mode": (
+                "entire_repo"
+                if payload and payload["scan_entire"]
+                else "selected_paths"
+                if payload
+                else "direct_input"
+            ),
+            "target_count": len(files),
+            "targets": [item["path"] for item in files[:20]],
+            "language_breakdown": [
+                {"language": language, "count": count}
+                for language, count in dominant_languages.most_common(6)
+            ],
+        }
+
+    @staticmethod
+    def _dependency_severity(version: str) -> str:
+        cleaned = str(version or "").strip().lstrip("^~>=<")
+        if cleaned.startswith("0."):
+            return "high"
+        if cleaned.startswith("1."):
+            return "medium"
+        return "low"
+
+    @staticmethod
+    def _dependency_fix_hint(name: str, version: str, ecosystem: str) -> str:
+        severity = ScanService._dependency_severity(version)
+        if severity == "high":
+            return f"Prioritize a review of {name} in {ecosystem}; early major versions often need closer upgrade scrutiny."
+        if severity == "medium":
+            return f"Check whether {name} has a newer maintained release and rerun the scan after upgrading."
+        return f"Keep {name} under normal dependency review and pin updates through your {ecosystem} workflow."
+
+    @staticmethod
+    def _extract_dependency_rows(source_text: str) -> List[Dict[str, object]]:
+        rows = []
+        seen = set()
+        for file_info in ScanService._split_source_files(source_text):
+            path = file_info["path"]
+            content = file_info["content"]
+            lowered_name = os.path.basename(path).lower()
+
+            if lowered_name == "package.json":
+                try:
+                    payload = json.loads(content)
+                except (TypeError, ValueError):
+                    payload = {}
+                for section_name in ("dependencies", "devDependencies"):
+                    section = payload.get(section_name) or {}
+                    if not isinstance(section, dict):
+                        continue
+                    for name, version in section.items():
+                        key = (path, name, str(version))
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        rows.append(
+                            {
+                                "name": name,
+                                "version": str(version),
+                                "severity": ScanService._dependency_severity(str(version)),
+                                "fix_available": ScanService._dependency_fix_hint(name, str(version), "npm"),
+                                "ecosystem": "npm",
+                                "manifest_path": path,
+                                "section": section_name,
+                            }
+                        )
+                continue
+
+            if lowered_name in {"requirements.txt", "pipfile", "poetry.lock"}:
+                for raw_line in content.splitlines():
+                    match = re.match(r"^\s*([A-Za-z0-9_.-]+)\s*(?:==|>=|~=|<=)?\s*([0-9][^\s;#]*)", raw_line)
+                    if not match:
+                        continue
+                    name, version = match.groups()
+                    key = (path, name, version)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rows.append(
+                        {
+                            "name": name,
+                            "version": version,
+                            "severity": ScanService._dependency_severity(version),
+                            "fix_available": ScanService._dependency_fix_hint(name, version, "pip"),
+                            "ecosystem": "pip",
+                            "manifest_path": path,
+                            "section": "dependencies",
+                        }
+                    )
+                continue
+
+            if lowered_name == "pyproject.toml":
+                try:
+                    payload = tomllib.loads(content)
+                except (TypeError, ValueError, tomllib.TOMLDecodeError):
+                    payload = {}
+                candidates = []
+                project = payload.get("project") or {}
+                candidates.extend(project.get("dependencies") or [])
+                poetry = (((payload.get("tool") or {}).get("poetry") or {}).get("dependencies") or {})
+                if isinstance(poetry, dict):
+                    for dep_name, dep_value in poetry.items():
+                        if dep_name.lower() == "python":
+                            continue
+                        version = dep_value if isinstance(dep_value, str) else dep_value.get("version", "*")
+                        candidates.append(f"{dep_name} {version}")
+                for raw_line in candidates:
+                    match = re.match(r"^\s*([A-Za-z0-9_.-]+).{0,6}?([0-9][A-Za-z0-9+_.-]*)", str(raw_line))
+                    if not match:
+                        continue
+                    name, version = match.groups()
+                    key = (path, name, version)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rows.append(
+                        {
+                            "name": name,
+                            "version": version,
+                            "severity": ScanService._dependency_severity(version),
+                            "fix_available": ScanService._dependency_fix_hint(name, version, "python"),
+                            "ecosystem": "python",
+                            "manifest_path": path,
+                            "section": "dependencies",
+                        }
+                    )
+                continue
+
+            if lowered_name == "go.mod":
+                for match in re.finditer(r"^\s*([A-Za-z0-9./_-]+)\s+v([0-9][^\s]*)", content, flags=re.MULTILINE):
+                    name, version = match.groups()
+                    key = (path, name, version)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rows.append(
+                        {
+                            "name": name,
+                            "version": version,
+                            "severity": ScanService._dependency_severity(version),
+                            "fix_available": ScanService._dependency_fix_hint(name, version, "go"),
+                            "ecosystem": "go",
+                            "manifest_path": path,
+                            "section": "require",
+                        }
+                    )
+                continue
+
+            if lowered_name == "cargo.toml":
+                for match in re.finditer(r"^\s*([A-Za-z0-9_.-]+)\s*=\s*\"([^\"]+)\"", content, flags=re.MULTILINE):
+                    name, version = match.groups()
+                    if name.lower() in {"package", "version", "edition"}:
+                        continue
+                    key = (path, name, version)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rows.append(
+                        {
+                            "name": name,
+                            "version": version,
+                            "severity": ScanService._dependency_severity(version),
+                            "fix_available": ScanService._dependency_fix_hint(name, version, "cargo"),
+                            "ecosystem": "cargo",
+                            "manifest_path": path,
+                            "section": "dependencies",
+                        }
+                    )
+                continue
+
+            for pattern in (
+                r"^([A-Za-z0-9_.-]+)==([0-9][^\s]*)$",
+                r"\"([A-Za-z0-9_.-]+)\"\s*:\s*\"([~^]?[0-9][^\"]*)\"",
+            ):
+                for match in re.finditer(pattern, content or "", flags=re.MULTILINE):
+                    name, version = match.groups()
+                    key = (path, name, version)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rows.append(
+                        {
+                            "name": name,
+                            "version": version,
+                            "severity": ScanService._dependency_severity(version),
+                            "fix_available": ScanService._dependency_fix_hint(name, version, "manifest"),
+                            "ecosystem": "manifest",
+                            "manifest_path": path,
+                            "section": "dependencies",
+                        }
+                    )
+        return rows
 
     @staticmethod
     def _comment_prefix(language: str) -> str:
@@ -984,6 +1451,30 @@ class ScanService:
                 "safe_default_payload": "<img src=x onerror=alert(1) />",
                 "expected_result": "Unsafe rendering would execute the payload in the browser context.",
                 "impact": "An attacker could steal sessions, deface content, or act as the user.",
+            }
+        if "pickle" in title or "deserialize" in title:
+            return {
+                "label": "Deserializer payload sandbox",
+                "placeholder": "gASV...crafted_pickle_payload...",
+                "safe_default_payload": "pickle.loads(attacker_controlled_bytes)",
+                "expected_result": "Unsafe deserialization can execute attacker-controlled behavior during object loading.",
+                "impact": "An attacker could trigger unexpected code paths and potentially execute arbitrary actions.",
+            }
+        if any(keyword in title for keyword in ("secret", "password", "token", "credential")):
+            return {
+                "label": "Secret exposure sandbox",
+                "placeholder": "grep -R \"secret\" .",
+                "safe_default_payload": "SECRET_KEY=dev-secret-123",
+                "expected_result": "Hardcoded secrets are easy to leak through logs, repos, and screenshots.",
+                "impact": "An attacker who obtains the secret can impersonate users or decrypt protected data.",
+            }
+        if any(keyword in title for keyword in ("command", "shell", "subprocess")):
+            return {
+                "label": "Command payload sandbox",
+                "placeholder": "; cat /etc/passwd",
+                "safe_default_payload": "&& whoami",
+                "expected_result": "Unsafe command execution would treat payload text as shell instructions.",
+                "impact": "An attacker could run commands on the host and pivot deeper into the environment.",
             }
         return {
             "label": "Query payload sandbox",
