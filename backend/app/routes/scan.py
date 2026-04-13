@@ -1,10 +1,12 @@
 import threading
 import time
 import uuid
+import os
 
 from flask import Blueprint, current_app, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
+from app.services.github_service import GitHubService
 from app.services.scan_service import ScanService
 from app.tasks.scan_tasks import process_scan_task
 from app.utils.constants import (
@@ -124,6 +126,8 @@ def submit_url_scan():
     user_id = int(get_jwt_identity())
     payload = request.get_json(silent=True) or {}
     github_url = (payload.get("github_url") or "").strip()
+    selected_paths = payload.get("selected_paths") or []
+    scan_entire = bool(payload.get("scan_entire", not selected_paths))
 
     if not enforce_rate_limit(
         f"scan:url:{user_id}",
@@ -135,7 +139,26 @@ def submit_url_scan():
     if not is_valid_github_url(github_url):
         return error_response("Invalid GitHub URL", "validation_error", 400)
 
-    scan = ScanService.create_scan(user_id, "url", github_url)
+    if not isinstance(selected_paths, list):
+        return error_response("selected_paths must be a list", "validation_error", 400)
+
+    normalized_paths = [
+        str(item or "").strip().strip("/")
+        for item in selected_paths
+        if str(item or "").strip()
+    ]
+    input_value = {
+        "github_url": github_url,
+        "selected_paths": [] if scan_entire else normalized_paths,
+        "scan_entire": scan_entire,
+    }
+
+    scan = ScanService.create_scan(
+        user_id,
+        "url",
+        ScanService.serialize_scan_input(input_value),
+        input_language="text",
+    )
     enqueued, queue_mode = _enqueue_scan(scan)
     if not enqueued:
         ScanService.mark_scan_enqueue_failed(scan, "Scan worker is unavailable. Please retry.")
@@ -151,10 +174,26 @@ def submit_url_scan():
             "status": scan.status,
             "celery_task_id": scan.celery_task_id,
             "queue_mode": queue_mode,
-            "created_at": scan.created_at.isoformat(),
+            "created_at": ScanService.serialize_datetime(scan.created_at),
         },
         202,
     )
+
+
+@scan_bp.post("/url/preview")
+@jwt_required()
+def preview_url_scan():
+    payload = request.get_json(silent=True) or {}
+    github_url = (payload.get("github_url") or "").strip()
+    if not is_valid_github_url(github_url):
+        return error_response("Invalid GitHub URL", "validation_error", 400)
+
+    try:
+        preview = GitHubService(token=os.getenv("GITHUB_TOKEN")).preview_repository(github_url)
+    except Exception as exc:
+        return error_response(str(exc), "preview_failed", 400)
+
+    return success_response(preview)
 
 
 @scan_bp.post("/paste")
@@ -163,7 +202,9 @@ def submit_paste_scan():
     user_id = int(get_jwt_identity())
     payload = request.get_json(silent=True) or {}
     code = payload.get("code") or ""
-    language = (payload.get("language") or "text").strip()
+    language = ScanService.normalize_language((payload.get("language") or "").strip())
+    if language == "text":
+        language = ScanService.detect_language(code)
 
     if not enforce_rate_limit(
         f"scan:paste:{user_id}",
@@ -219,6 +260,7 @@ def submit_upload_scan():
 
     total_size = 0
     chunks = []
+    language_candidates = []
     for file_obj in files:
         if not is_allowed_upload(file_obj.filename):
             return error_response("Unsupported file type", "validation_error", 400)
@@ -233,9 +275,18 @@ def submit_upload_scan():
             return error_response("Total upload size exceeded", "validation_error", 400)
 
         chunks.append(f"\n# File: {file_obj.filename}\n{content.decode('utf-8', errors='ignore')}")
+        language_candidates.append(ScanService.detect_language_from_filename(file_obj.filename))
 
     combined = "\n".join(chunks)
-    scan = ScanService.create_scan(user_id, "upload", combined, file_count=len(files), code_size_bytes=total_size)
+    language = next((item for item in language_candidates if item != "text"), ScanService.detect_language(combined))
+    scan = ScanService.create_scan(
+        user_id,
+        "upload",
+        combined,
+        file_count=len(files),
+        code_size_bytes=total_size,
+        input_language=language,
+    )
     enqueued, queue_mode = _enqueue_scan(scan)
     if not enqueued:
         ScanService.mark_scan_enqueue_failed(scan, "Scan worker is unavailable. Please retry.")
@@ -281,8 +332,8 @@ def scan_history():
             "input_type": scan.input_type,
             "queue_mode": scan.queue_mode,
             "provider_used": scan.ai_provider_used,
-            "created_at": scan.created_at.isoformat() if scan.created_at else None,
-            "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
+            "created_at": ScanService.serialize_datetime(scan.created_at),
+            "completed_at": ScanService.serialize_datetime(scan.completed_at),
         }
         for scan in pagination.items
     ]
