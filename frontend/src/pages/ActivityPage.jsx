@@ -7,21 +7,8 @@ import Card from "../components/Common/Card";
 import ScrollReveal from "../components/Common/ScrollReveal";
 import { createShareLink } from "../services/reportService";
 import { deleteScan, getScanHistory } from "../services/scanService";
+import { formatDateTimeInIndia } from "../utils/datetime";
 import { APP_ROUTES } from "../utils/constants";
-
-const formatDateTime = (value) => {
-  if (!value) {
-    return "n/a";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "n/a";
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsed);
-};
 
 const ActivityPage = () => {
   const [state, setState] = useState({ loading: true, error: "", items: [] });
@@ -86,7 +73,7 @@ const ActivityPage = () => {
                     Queue: {scan.queue_mode || "unknown"} | Provider: {scan.provider_used || "local_fallback"}
                   </p>
                   <p className="mt-1 text-xs text-text2">
-                    Started: {formatDateTime(scan.created_at)} | Finished: {formatDateTime(scan.completed_at)}
+                    Started: {formatDateTimeInIndia(scan.created_at)} | Finished: {formatDateTimeInIndia(scan.completed_at)}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
