@@ -10,6 +10,8 @@ SQLAlchemy>=2.0.40,<2.1
 # Async task queue
 Celery==5.3.4
 redis==5.0.1
+gunicorn==22.0.0
+eventlet==0.36.1
 
 # Multi-Provider AI Integration
 groq==0.4.2

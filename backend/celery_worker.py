@@ -7,5 +7,6 @@ flask_app = create_app()
 flask_app.app_context().push()
 
 celery = flask_app.extensions["celery"]
+worker = celery
 
-__all__ = ["celery", "celery_app"]
+__all__ = ["celery", "worker", "celery_app"]

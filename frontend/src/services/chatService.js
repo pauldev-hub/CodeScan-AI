@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 
-import { API_BASE_URL, SOCKET_EVENTS } from "../utils/constants";
+import { SOCKET_BASE_URL, SOCKET_EVENTS } from "../utils/constants";
 
 let socket = null;
 
@@ -9,7 +9,7 @@ export const createSocket = (token) => {
     socket.disconnect();
   }
 
-  socket = io(API_BASE_URL, {
+  socket = io(SOCKET_BASE_URL, {
     transports: ["websocket", "polling"],
     auth: {
       token,

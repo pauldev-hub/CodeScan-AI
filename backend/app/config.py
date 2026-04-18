@@ -21,21 +21,32 @@ def _env_list(name, default):
     return [item.strip() for item in str(raw).split(",") if item.strip()]
 
 
+def _default_cors_origins():
+    frontend_url = os.getenv("FRONTEND_URL")
+    origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ]
+    if frontend_url:
+        origins.insert(0, frontend_url)
+    # Keep original order while removing duplicates.
+    return list(dict.fromkeys(origins))
+
+
 class BaseConfig:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///codescan.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", SECRET_KEY)
-    JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=15)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
 
     BCRYPT_LOG_ROUNDS = int(os.getenv("BCRYPT_LOG_ROUNDS", "12"))
 
-    CORS_ORIGINS = _env_list(
-        "CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
-    )
+    CORS_ORIGINS = _env_list("CORS_ORIGINS", ",".join(_default_cors_origins()))
 
     REDIS_URL = os.getenv("REDIS_URL")
     CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL or "redis://localhost:6379/0")
@@ -68,6 +79,7 @@ class TestingConfig(BaseConfig):
 
 class ProductionConfig(BaseConfig):
     DEBUG = False
+    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:////var/data/codescan.db")
 
 
 CONFIG_BY_NAME = {

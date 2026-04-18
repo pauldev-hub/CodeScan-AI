@@ -1,7 +1,7 @@
 import { io } from "socket.io-client";
 
 import client from "./apiClient";
-import { API_BASE_URL, API_PATHS, SOCKET_EVENTS } from "../utils/constants";
+import { API_PATHS, SOCKET_BASE_URL, SOCKET_EVENTS } from "../utils/constants";
 
 let socket = null;
 
@@ -29,7 +29,7 @@ export const createChatSocket = (token) => {
   if (socket) {
     socket.disconnect();
   }
-  socket = io(API_BASE_URL, {
+  socket = io(SOCKET_BASE_URL, {
     transports: ["websocket", "polling"],
     auth: { token },
   });

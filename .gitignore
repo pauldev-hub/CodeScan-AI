@@ -12,8 +12,23 @@ frontend/dist/
 .env
 .env.*
 !.env.example
+!frontend/.env.production
 
 # OS / editor
 .DS_Store
 Thumbs.db
 .vscode/*.code-workspace
+
+# Logs and backups
+*.log
+.log
+
+# Database files
+*.db
+*.backup.*
+
+# GitHub configs
+.github/
+
+# Bad code examples
+bad_code_example.py

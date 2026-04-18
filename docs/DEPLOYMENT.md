@@ -91,7 +91,12 @@ pip install -r requirements.txt
 
 **Start Command:**
 ```bash
-gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:${PORT:-5000} app:create_app()
+gunicorn --worker-class eventlet -w 1 run:app
+```
+
+**Root Directory:**
+```
+backend
 ```
 
 ### Step 2: Add Environment Variables
@@ -108,15 +113,17 @@ DATABASE_URL=sqlite:////var/data/codescan.db
 
 # AI Provider Keys
 GROQ_API_KEY=your_groq_api_key
-GOOGLE_GEMINI_API_KEY=your_gemini_api_key
-HUGGINGFACE_API_KEY=your_huggingface_token
+GEMINI_API_KEY=your_gemini_api_key
+HUGGING_FACE_API_KEY=your_huggingface_token
 
 # Redis (will be added separately)
 REDIS_URL=redis://default:password@redis-instance.onrender.com:6379
+CELERY_BROKER_URL=redis://default:password@redis-instance.onrender.com:6379/0
+CELERY_RESULT_BACKEND=redis://default:password@redis-instance.onrender.com:6379/1
 
 # CORS Settings
 FRONTEND_URL=https://codescan-ai.vercel.app
-ALLOWED_ORIGINS=https://codescan-ai.vercel.app,http://localhost:3000
+CORS_ORIGINS=https://codescan-ai.vercel.app,http://localhost:5173
 
 # JWT Config
 JWT_SECRET_KEY=your-jwt-secret-key
@@ -167,7 +174,7 @@ pip install -r requirements.txt
 
 **Start Command:**
 ```bash
-celery -A app.tasks.scan_tasks worker --loglevel=info
+celery -A celery_worker.celery worker --loglevel=info --concurrency=2
 ```
 
 **Environment Variables:** (Same as Flask API service)
